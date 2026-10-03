@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Все денежные суммы хранятся в целых тенге.
+
+model User {
+  id             String   @id @default(cuid())
+  phone          String   @unique
+  passwordHash   String
+  name           String?
+  telegramChatId String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  shops Shop[]
+}
+
+model Shop {
+  id          String   @id @default(cuid())
+  ownerId     String
+  name        String
+  merchantId  String   @unique
+  // API-токен Kaspi, зашифрованный AES-256-GCM (см. @kaspi/core encryptSecret)
+  apiTokenEnc String
+  // Город, по которому смотрим цены конкурентов (код Kaspi, по умолчанию Алматы)
+  cityId      String   @default("750000000")
+  // Общая пауза репрайсера по магазину; выбор по товарам при этом не меняется
+  repricerEnabled Boolean @default(true)
+  // Куки сессии кабинета продавца (kaspi.kz/mc), зашифрованные как apiTokenEnc.
+  // Нужны для синхронизации товаров в продаже
+  mcSessionEnc    String?
+  // Логин и пароль пользователя кабинета Kaspi этого магазина, зашифрованные.
+  // Нужны воркеру, чтобы входить заново, когда сессия истекла
+  mcLoginEnc      String?
+  mcPasswordEnc   String?
+  productsSyncedAt DateTime?
+  ordersSyncedAt   DateTime?
+  // Удержания Kaspi для аналитики: НДС на комиссию Магазина и комиссия Kaspi Pay, %
+  commissionVatPercent Decimal @default(16) @db.Decimal(5, 2)
+  paymentFeePercent    Decimal @default(0.95) @db.Decimal(5, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  subscription    Subscription?
+  products        Product[]
+  orders          Order[]
+  waybillBatches  WaybillBatch[]
+  printedWaybills PrintedWaybill[]
+
+  @@index([ownerId])
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+}
+
+model Subscription {
+  id          String             @id @default(cuid())
+  shopId      String             @unique
+  status      SubscriptionStatus @default(TRIAL)
+  plan        String             @default("yearly")
+  trialEndsAt DateTime?
+  paidUntil   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id        String   @id @default(cuid())
+  shopId    String
+  kaspiSku  String
+  // Код общей карточки товара на Kaspi (число в конце ссылки на карточку);
+  // без него репрайсер не может получить цены конкурентов
+  kaspiMasterSku String?
+  // Сколько продавцов в карточке, включая нас, по последней проверке.
+  // Больше одного — «открытая» карточка с конкурентами
+  sellersCount Int?
+  name      String
+  brand     String?
+  category  String?
+  price     Int
+  // Себестоимость единицы; без неё прибыль и ROI не считаются
+  costPrice Int?
+  stock     Int      @default(0)
+  available Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shop            Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  repricerSetting RepricerSetting?
+  competitorLogs  CompetitorLog[]
+  priceChanges    PriceChange[]
+  orderItems      OrderItem[]
+
+  @@unique([shopId, kaspiSku])
+}
+
+model RepricerSetting {
+  id               String    @id @default(cuid())
+  productId        String    @unique
+  enabled          Boolean   @default(false)
+  // Ниже этой цены бот не опускается никогда
+  floorPrice       Int
+  // Выше этой цены бот не поднимается; если не задана, бот цену не повышает
+  ceilingPrice     Int?
+  step             Int       @default(1)
+  checkIntervalSec Int       @default(300)
+  lastCheckedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, lastCheckedAt])
+}
+
+model CompetitorLog {
+  id           BigInt   @id @default(autoincrement())
+  productId    String
+  merchantId   String
+  merchantName String?
+  price        Int
+  position     Int?
+  capturedAt   DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, capturedAt])
+}
+
+model PriceChange {
+  id        String   @id @default(cuid())
+  productId String
+  oldPrice  Int
+  newPrice  Int
+  reason    String
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+}
+
+model Order {
+  id             String   @id @default(cuid())
+  shopId         String
+  kaspiOrderId   String
+  code           String
+  // state и status приходят от Kaspi строками (NEW, KASPI_DELIVERY, ARCHIVE, ...)
+  state          String
+  status         String
+  totalPrice     Int
+  // Доставка, которую Kaspi удерживает с продавца (deliveryCostForSeller)
+  deliveryCost   Int       @default(0)
+  city           String?
+  waybillUrl     String?
+  createdAtKaspi DateTime
+  completedAt    DateTime?
+  // Когда заказ передан курьеру Kaspi Доставки — для среднего времени обработки
+  courierTransmissionDate DateTime?
+  deliveryMode    String?
+  paymentMode     String?
+  isKaspiDelivery Boolean   @default(false)
+  express         Boolean   @default(false)
+  syncedAt       DateTime  @default(now())
+  // Когда загружены позиции заказа; null — ещё не загружены
+  itemsSyncedAt  DateTime?
+
+  shop  Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  items OrderItem[]
+
+  @@unique([shopId, code])
+  @@index([shopId, createdAtKaspi])
+  @@index([shopId, state])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String?
+  kaspiSku  String
+  name      String
+  // Код категории Kaspi, например "Master - Hair care products"
+  category  String?
+  categoryTitle String?
+  quantity  Int
+  unitPrice Int
+  totalPrice Int    @default(0)
+  // Себестоимость на момент продажи; если не задана, берётся из товара
+  costPrice Int?
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+// Комиссия Kaspi по категории без НДС, %. Kaspi API её не отдаёт — ставки из
+// официальной таблицы «Тарифы Магазина на Kaspi.kz» или вводит продавец
+model CategoryCommission {
+  id        String   @id @default(cuid())
+  category  String   @unique
+  title     String?
+  percent   Decimal  @db.Decimal(5, 2)
+  updatedAt DateTime @updatedAt
+}
+
+enum WaybillLayout {
+  THERMAL
+  A4_X4
+  A4_X8
+}
+
+model WaybillBatch {
+  id          String        @id @default(cuid())
+  shopId      String
+  layout      WaybillLayout
+  storagePath String
+  count       Int
+  createdAt   DateTime      @default(now())
+
+  shop     Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  waybills PrintedWaybill[]
+
+  @@index([shopId, createdAt])
+}
+
+model PrintedWaybill {
+  id        String   @id @default(cuid())
+  shopId    String
+  orderCode String
+  batchId   String
+  printedAt DateTime @default(now())
+
+  shop  Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  batch WaybillBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  // Защита от повторной печати
+  @@unique([shopId, orderCode])
+}
+

@@ -1,0 +1,9 @@
+node_modules
+.env
+.env.server
+# Логин и пароль кабинета на сервере
+server-access.txt
+.next
+dist
+storage
+*.tsbuildinfo

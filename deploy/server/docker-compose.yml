@@ -1,0 +1,97 @@
+# Kaspi SaaS на одном VPS. Запуск из /opt/kaspi-saas — скрипт deploy/server/up.sh.
+# Переменные — в /opt/kaspi-saas/.env.server.
+# Наружу открыт только Caddy (порт 80) с паролем; база, Redis и api доступны лишь внутри.
+
+x-app: &app
+  image: kaspi-saas:latest
+  # Образ собирается локально командой build migrate, из реестра не скачивается
+  pull_policy: never
+  env_file: ../../.env.server
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kaspi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.server}
+      POSTGRES_DB: kaspi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kaspi']
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+
+  # Миграции базы перед стартом api и worker
+  migrate:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: deploy/server/Dockerfile
+    restart: 'no'
+    command: ['npx', 'prisma', 'migrate', 'deploy', '--schema', 'packages/db/prisma/schema.prisma']
+
+  api:
+    <<: *app
+    command: ['npx', 'tsx', 'apps/api/src/index.ts']
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ['npx', 'tsx', 'apps/worker/src/index.ts']
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Демпинг-бот меняет цены в Kaspi, поэтому воркер запускается отдельной командой:
+    #   docker compose -f deploy/server/docker-compose.yml --profile worker up -d worker
+    profiles: ['worker']
+
+  bot:
+    <<: *app
+    command: ['npx', 'tsx', 'apps/bot/src/index.ts']
+    # Включается, когда в .env.server появится TELEGRAM_BOT_TOKEN
+    profiles: ['bot']
+
+  web:
+    <<: *app
+    command: ['npm', 'run', 'start', '-w', '@kaspi/web', '--', '-p', '3000']
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '80:80'
+    environment:
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?set in .env.server}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?set in .env.server}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  redisdata:
+  storage:

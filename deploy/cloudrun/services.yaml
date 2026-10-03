@@ -1,0 +1,25 @@
+# Переменные окружения (DATABASE_URL, REDIS_URL, API_INTERNAL_KEY и другие)
+# задаются отдельно, через Secret Manager или настройки сервиса Cloud Run.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: kaspi-api
+spec:
+  template:
+    spec:
+      containers:
+        - image: kaspi-api
+          ports:
+            - containerPort: 4000
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: kaspi-web
+spec:
+  template:
+    spec:
+      containers:
+        - image: kaspi-web
+          ports:
+            - containerPort: 3000

@@ -1,0 +1,48 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: kaspi-saas
+
+build:
+  artifacts:
+    - image: kaspi-api
+      context: .
+      docker:
+        dockerfile: deploy/docker/service.Dockerfile
+        buildArgs:
+          APP: api
+    - image: kaspi-worker
+      context: .
+      docker:
+        dockerfile: deploy/docker/service.Dockerfile
+        buildArgs:
+          APP: worker
+    - image: kaspi-bot
+      context: .
+      docker:
+        dockerfile: deploy/docker/service.Dockerfile
+        buildArgs:
+          APP: bot
+    - image: kaspi-web
+      context: .
+      docker:
+        dockerfile: deploy/docker/web.Dockerfile
+
+# По умолчанию — Kubernetes (GKE): все четыре сервиса.
+manifests:
+  rawYaml:
+    - deploy/k8s/*.yaml
+deploy:
+  kubectl: {}
+
+profiles:
+  # Cloud Run: только api и web. worker и bot не слушают HTTP-порт,
+  # поэтому как сервисы Cloud Run они не запускаются — для них нужен GKE.
+  - name: cloudrun
+    manifests:
+      rawYaml:
+        - deploy/cloudrun/*.yaml
+    deploy:
+      cloudrun:
+        projectid: YOUR_GCP_PROJECT
+        region: europe-west1

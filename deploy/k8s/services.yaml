@@ -1,0 +1,103 @@
+# Переменные окружения берутся из секрета kaspi-saas-env:
+#   kubectl create secret generic kaspi-saas-env --from-env-file=.env
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaspi-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kaspi-api }
+  template:
+    metadata:
+      labels: { app: kaspi-api }
+    spec:
+      containers:
+        - name: api
+          image: kaspi-api
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - secretRef: { name: kaspi-saas-env }
+          readinessProbe:
+            httpGet: { path: /health, port: 4000 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaspi-api
+spec:
+  selector: { app: kaspi-api }
+  ports:
+    - port: 80
+      targetPort: 4000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaspi-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kaspi-web }
+  template:
+    metadata:
+      labels: { app: kaspi-web }
+    spec:
+      containers:
+        - name: web
+          image: kaspi-web
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - secretRef: { name: kaspi-saas-env }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaspi-web
+spec:
+  type: LoadBalancer
+  selector: { app: kaspi-web }
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaspi-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kaspi-worker }
+  template:
+    metadata:
+      labels: { app: kaspi-worker }
+    spec:
+      containers:
+        - name: worker
+          image: kaspi-worker
+          envFrom:
+            - secretRef: { name: kaspi-saas-env }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaspi-bot
+spec:
+  # Бот работает через long polling: больше одной реплики запускать нельзя
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: kaspi-bot }
+  template:
+    metadata:
+      labels: { app: kaspi-bot }
+    spec:
+      containers:
+        - name: bot
+          image: kaspi-bot
+          envFrom:
+            - secretRef: { name: kaspi-saas-env }

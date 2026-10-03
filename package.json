@@ -1,0 +1,36 @@
+{
+  "name": "kaspi-saas",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "db:generate": "npm run generate -w @kaspi/db",
+    "db:validate": "npm run validate -w @kaspi/db",
+    "db:migrate": "npm run migrate -w @kaspi/db",
+    "add-shop": "node --env-file=.env --import tsx scripts/add-shop.ts",
+    "mc:login": "node --env-file=.env --import tsx scripts/mc-login.ts",
+    "seed:commissions": "node --env-file=.env --import tsx scripts/kaspi-commissions-2026.ts",
+    "sync:orders":"node --env-file=.env --import tsx scripts/sync-orders.ts",
+    "status":"node --env-file=.env --import tsx scripts/status.ts",
+    "price-reader": "node --env-file=.env --import tsx scripts/price-reader.ts",
+    "check:kaspi": "node --env-file=.env --import tsx scripts/check-kaspi.ts",
+    "dev:api": "node --env-file=.env --import tsx apps/api/src/index.ts",
+    "dev:worker": "node --env-file=.env --import tsx apps/worker/src/index.ts",
+    "dev:bot": "node --env-file=.env --import tsx apps/bot/src/index.ts",
+    "dev:web": "node --env-file=.env node_modules/next/dist/bin/next dev apps/web -p 3000"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
