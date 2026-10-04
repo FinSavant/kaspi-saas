@@ -106,18 +106,32 @@ export interface PriceUpdatePayload {
   availabilities: { available: 'yes'; storeId: string; stockCount?: number }[];
 }
 
+/** Товар закончился на всех складах города: цену не меняем, чтобы не вернуть его в продажу. */
+export class KaspiCabinetOutOfStockError extends KaspiCabinetError {}
+
+/** Склад включён и на нём есть товар; склад без учёта остатков считается в наличии. */
+const hasStock = (point: any) => point?.available === true && !(point.stock?.enabled && Number(point.stock.value ?? 0) <= 0);
+
 /**
  * Собирает изменение цены из текущих данных товара (offer-view/details):
  * меняется только цена в городе `cityId`. Склады передаются те же, что сейчас
- * включены, с теми же остатками, — иначе Kaspi может снять наличие.
+ * включены, с теми же остатками, — иначе Kaspi может снять наличие. Склады с
+ * нулевым остатком не передаются: «в наличии» с нулём вернуло бы закончившийся
+ * товар в продажу вместо архива.
  */
 export function buildPriceUpdate(details: any, merchantId: string, cityId: string, price: number): PriceUpdatePayload {
   if (!Number.isInteger(price) || price <= 0) throw new RangeError(`Invalid price: ${price}`);
 
   const cityPrices: PriceUpdatePayload['cityPrices'] = [];
   const availabilities: PriceUpdatePayload['availabilities'] = [];
-  for (const city of Array.isArray(details?.cityInfo) ? details.cityInfo : []) {
-    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter((p: any) => p?.available === true);
+  const cities: any[] = Array.isArray(details?.cityInfo) ? details.cityInfo : [];
+  const target = cities.find((c) => String(c?.id) === cityId);
+  const targetPoints = (Array.isArray(target?.pickupPoints) ? target.pickupPoints : []).filter((p: any) => p?.available === true);
+  if (target?.price && targetPoints.length > 0 && !targetPoints.some(hasStock)) {
+    throw new KaspiCabinetOutOfStockError(200, '', `Product ${details?.sku} is out of stock in city ${cityId}`);
+  }
+  for (const city of cities) {
+    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter(hasStock);
     if (!city?.price || points.length === 0) continue;
 
     cityPrices.push({ cityId: String(city.id), value: String(city.id) === cityId ? price : Number(city.price) });

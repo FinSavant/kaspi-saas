@@ -6,7 +6,7 @@ import {
   type RepricerJob,
 } from '@kaspi/core';
 import { prisma } from '@kaspi/db';
-import { KaspiCabinetRateLimitError } from '@kaspi/kaspi-client';
+import { KaspiCabinetOutOfStockError, KaspiCabinetRateLimitError } from '@kaspi/kaspi-client';
 import type { Queue } from 'bullmq';
 import { withCabinet } from '../kaspi';
 
@@ -115,6 +115,12 @@ export async function repriceProduct(
     try {
       await withCabinet(shop, (client) => client.updatePrice(shop.merchantId, product.kaspiSku, shop.cityId, decision.price));
     } catch (error) {
+      if (error instanceof KaspiCabinetOutOfStockError) {
+        // Закончился: не трогаем, чтобы Kaspi снял его с продажи; бот вернётся к нему после поставки
+        console.warn(`[repricer] product ${productId} is out of stock, price not changed`);
+        await prisma.product.update({ where: { id: productId }, data: { stock: 0 } });
+        return;
+      }
       if (!(error instanceof KaspiCabinetRateLimitError)) throw error;
       console.warn(`[repricer] price change limit reached for shop ${shop.id}; product ${productId} postponed`);
       await prisma.repricerSetting.update({

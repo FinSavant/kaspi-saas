@@ -4,6 +4,7 @@ import {
   CookieJar,
   KaspiCabinetAuthError,
   KaspiCabinetClient,
+  KaspiCabinetOutOfStockError,
   KaspiCabinetRateLimitError,
   mapCabinetOffer,
 } from './cabinet';
@@ -53,6 +54,19 @@ describe('buildPriceUpdate', () => {
 
   it('refuses to put a product on sale in a city where it is not sold', () => {
     expect(() => buildPriceUpdate(details, '4869024', '620000000', 4000)).toThrow(/not on sale/);
+  });
+
+  it('does not send warehouses whose tracked stock ran out', () => {
+    const mixed = structuredClone(details);
+    mixed.cityInfo[0]!.pickupPoints.push({ name: '4869024_PP5', available: true, stock: { value: 0, enabled: true } });
+    const update = buildPriceUpdate(mixed, '4869024', '750000000', 4899);
+    expect(update.availabilities.map((a) => a.storeId)).toEqual(['4869024_PP4', '4869024_PP7']);
+  });
+
+  it('refuses to change the price of a product that ran out, so it is not put back on sale', () => {
+    const soldOut = structuredClone(details);
+    soldOut.cityInfo[0]!.pickupPoints = [{ name: '4869024_PP4', available: true, stock: { value: 0, enabled: true } }];
+    expect(() => buildPriceUpdate(soldOut, '4869024', '750000000', 4899)).toThrow(KaspiCabinetOutOfStockError);
   });
 
   it('rejects an invalid price', () => {
