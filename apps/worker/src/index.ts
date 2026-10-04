@@ -80,7 +80,8 @@ const workers = [
     { connection, concurrency: 5 },
   ),
   new Worker<OrdersSyncJob>(QUEUES.ordersSync, async (job) => syncOrders(job.data.shopId), { connection }),
-  new Worker<WaybillsJob>(QUEUES.waybills, async (job) => printWaybills(job.data, storage), { connection }),
+  // Склейки строго по одной: две одновременные могли бы напечатать один заказ дважды
+  new Worker<WaybillsJob>(QUEUES.waybills, async (job) => printWaybills(job.data, storage), { connection, concurrency: 1 }),
   new Worker<ProductsSyncJob>(
     QUEUES.productsSync,
     async (job) => syncProducts(job.data.shopId, sellersCounter),

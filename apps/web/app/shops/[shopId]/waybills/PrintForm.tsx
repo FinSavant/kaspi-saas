@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState, useTransition } from 'react';
+import { useActionState, useState, useTransition, type FormEvent } from 'react';
 import { loadCandidates, printWaybills, reprintBatch, type Candidate, type PrintState } from './actions';
 
 const LAYOUTS = [
@@ -30,7 +30,10 @@ function ResultMessage({ shopId, state }: { shopId: string; state: PrintState })
     <>
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
       {result && result.count === 0 && result.notReady === 0 && (
-        <p className="text-sm text-slate-600">Подходящих заказов в «Передаче» нет.</p>
+        <p className="text-sm text-slate-600">
+          Подходящих заказов в «Передаче» нет. Чтобы напечатать уже напечатанные, снимите в расширенных настройках
+          галочку «Только новые заказы» или скачайте прежний PDF в истории склеек ниже.
+        </p>
       )}
       {result && result.count > 0 && (result.href || result.batchId) && (
         <p className="text-sm text-emerald-700">
@@ -157,9 +160,18 @@ function PrintFilters({ shopId }: { shopId: string }) {
 
 export function PrintForm({ shopId, shops }: { shopId: string; shops: { id: string; name: string }[] }) {
   const [state, action, pending] = useActionState<PrintState, FormData>(printWaybills, {});
+  const [, startPrint] = useTransition();
+
+  // Отправка через onSubmit, а не action: так React не сбрасывает форму после склейки,
+  // и выбранные формат, галочки и фильтры остаются для следующего нажатия
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget);
+    startPrint(() => action(data));
+  };
 
   return (
-    <form action={action} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+    <form onSubmit={submit} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
       <input type="hidden" name="shopId" value={shopId} />
       {shops.length > 1 && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">

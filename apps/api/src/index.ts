@@ -634,11 +634,12 @@ app.post<{ Params: { shopId: string }; Body: PrintBody }>(
       return reply.code(404).send({ error: 'shop not found' });
     }
 
-    // Одна склейка на магазин за раз: повторное нажатие не печатает заказы дважды
+    // Каждое нажатие — своя задача. Воркер склеивает по одной задаче за раз, поэтому
+    // повторное нажатие не печатает заказы дважды: «только новые» отсеет уже напечатанные
     const job = await waybillsQueue.add(
       'print',
       { shopId, ...options },
-      { jobId: `print-${shopId}`, removeOnComplete: { age: 60 }, removeOnFail: { age: 60 } },
+      { jobId: `print-${shopId}-${Date.now()}`, removeOnComplete: { age: 600 }, removeOnFail: { age: 600 } },
     );
     // Склейка запускается по запросу, поэтому ждём результат и отдаём его сразу
     try {
@@ -661,7 +662,7 @@ app.post<{ Params: { batchId: string }; Body: { layout?: WaybillLayout } }>(
     const job = await waybillsQueue.add(
       'reprint',
       { shopId: source.shopId, layout, reprintBatchId: source.id },
-      { jobId: `print-${source.shopId}`, removeOnComplete: { age: 60 }, removeOnFail: { age: 60 } },
+      { jobId: `reprint-${source.id}-${Date.now()}`, removeOnComplete: { age: 600 }, removeOnFail: { age: 600 } },
     );
     try {
       return await job.waitUntilFinished(waybillsEvents, PRINT_TIMEOUT_MS);
