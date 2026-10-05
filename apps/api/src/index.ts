@@ -46,6 +46,17 @@ const productsSyncEvents = new QueueEvents(QUEUES.productsSync, { connection });
 const SYNC_TIMEOUT_MS = 600_000;
 const ordersSyncQueue = new Queue<OrdersSyncJob>(QUEUES.ordersSync, { connection });
 
+/**
+ * Задачи «по кнопке» имеют постоянный jobId, чтобы повторное нажатие во время работы
+ * не запускало вторую. Но выполненная задача с тем же jobId живёт в Redis, пока её
+ * не уберут, — и новая не создаётся: add() вернул бы старую с прежним результатом.
+ * Поэтому перед запуском завершённая задача удаляется.
+ */
+async function dropFinishedJob(queue: Queue, jobId: string): Promise<void> {
+  const old = await queue.getJob(jobId);
+  if (old && ['completed', 'failed'].includes(await old.getState())) await old.remove();
+}
+
 const app = Fastify({ logger: true });
 
 // Открыты только проверка состояния и прайс-лист (его забирает сам Kaspi).
@@ -280,6 +291,7 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/orders/sync', async (re
     return reply.code(404).send({ error: 'shop not found' });
   }
   // Первая загрузка за 3 месяца идёт несколько минут, поэтому не ждём её
+  await dropFinishedJob(ordersSyncQueue, `orders-manual-${shopId}`);
   const job = await ordersSyncQueue.add(
     'sync',
     { shopId },
@@ -351,6 +363,7 @@ app.post<{ Body: { name?: string; merchantId?: string; apiToken?: string; mcLogi
       { every: ORDERS_SYNC_MS },
       { name: 'sync', data: { shopId: shop.id }, opts: { removeOnComplete: 20, removeOnFail: 20 } },
     );
+    await dropFinishedJob(ordersSyncQueue, `orders-manual-${shop.id}`);
     await ordersSyncQueue.add('sync', { shopId: shop.id }, { jobId: `orders-manual-${shop.id}`, removeOnComplete: { age: 60 }, removeOnFail: { age: 60 } });
     return reply.code(201).send({ id: shop.id });
   },
@@ -720,6 +733,7 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/products/sync', async (
     return reply.code(404).send({ error: 'shop not found' });
   }
   // Повторное нажатие, пока синхронизация идёт, не создаёт вторую задачу
+  await dropFinishedJob(productsSyncQueue, `sync-${shopId}`);
   const job = await productsSyncQueue.add(
     'sync',
     { shopId },
@@ -736,7 +750,8 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/products/sync', async (
 // Только товары в продаже; снятые с продажи остаются в базе вместе с настройками бота
 app.get<{ Params: { shopId: string } }>('/shops/:shopId/products', async (request) =>
   prisma.product.findMany({
-    where: { shopId: request.params.shopId, available: true },
+    // Снятые с продажи показываются, если для них настроен предзаказ: их ждёт автопредзаказ
+    where: { shopId: request.params.shopId, OR: [{ available: true }, { preorderDays: { gt: 0 } }] },
     include: { repricerSetting: true },
     orderBy: { name: 'asc' },
   }),
@@ -744,16 +759,24 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/products', async (reques
 
 const isNonNegativeInt = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
 
-// Себестоимость вводится вручную; null очищает значение
-app.patch<{ Params: { productId: string }; Body: { costPrice?: number | null } }>(
+// Себестоимость и дни автопредзаказа вводятся вручную; null очищает значение
+app.patch<{ Params: { productId: string }; Body: { costPrice?: number | null; preorderDays?: number | null } }>(
   '/products/:productId',
   async (request, reply) => {
-    const costPrice = request.body?.costPrice;
-    if (costPrice === undefined) return reply.code(400).send({ error: 'costPrice is required' });
-    if (costPrice !== null && !isNonNegativeInt(costPrice)) {
+    const { costPrice, preorderDays } = request.body ?? {};
+    if (costPrice === undefined && preorderDays === undefined) {
+      return reply.code(400).send({ error: 'costPrice or preorderDays is required' });
+    }
+    if (costPrice !== undefined && costPrice !== null && !isNonNegativeInt(costPrice)) {
       return reply.code(400).send({ error: 'costPrice must be a non-negative integer or null' });
     }
-    return prisma.product.update({ where: { id: request.params.productId }, data: { costPrice } });
+    if (preorderDays !== undefined && preorderDays !== null && !(Number.isInteger(preorderDays) && preorderDays >= 1 && preorderDays <= 60)) {
+      return reply.code(400).send({ error: 'Предзаказ — от 1 до 60 дней.' });
+    }
+    return prisma.product.update({
+      where: { id: request.params.productId },
+      data: { ...(costPrice !== undefined && { costPrice }), ...(preorderDays !== undefined && { preorderDays }) },
+    });
   },
 );
 

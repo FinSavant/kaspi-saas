@@ -11,7 +11,12 @@ export interface ProductView {
   price: number;
   costPrice: number | null;
   stock: number;
+  available: boolean;
   sellersCount: number | null;
+  /** Настройка автопредзаказа, дней. */
+  preorderDays: number | null;
+  /** Сейчас на предзаказе в Kaspi, дней. */
+  preOrder: number | null;
   repricerSetting: {
     enabled: boolean;
     floorPrice: number;
@@ -80,6 +85,22 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
       </td>
       <td className={`${COL.bot} px-3 py-2 text-right`}>
         <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className="w-14 rounded border border-amber-300 bg-white px-2 py-1 text-right text-amber-900 tabular-nums" />
+      </td>
+      <td className={`${COL.preorder} px-3 py-2 text-right`}>
+        <input
+          {...field}
+          name="preorderDays"
+          defaultValue={product.preorderDays ?? ''}
+          placeholder="—"
+          title="Когда товар закончится, он сам встанет на предзаказ на столько дней. Пусто — не ставить."
+          aria-label="Предзаказ, дней"
+          className="w-14 rounded border border-indigo-300 bg-white px-2 py-1 text-right text-indigo-900 tabular-nums"
+        />
+        {product.preOrder ? (
+          <div className="mt-1 text-xs font-medium whitespace-nowrap text-indigo-700">на предзаказе · {product.preOrder} д.</div>
+        ) : !product.available ? (
+          <div className="mt-1 text-xs whitespace-nowrap text-slate-500">снят с продажи</div>
+        ) : null}
       </td>
       <td className={`${COL.toggle} px-3 py-2 text-center`}>
         <input form={formId} type="checkbox" name="enabled" defaultChecked={setting?.enabled ?? false} onChange={save} aria-label="Бот включён" className="h-5 w-5 accent-emerald-600" />

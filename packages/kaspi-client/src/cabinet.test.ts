@@ -7,6 +7,7 @@ import {
   KaspiCabinetOutOfStockError,
   KaspiCabinetRateLimitError,
   mapCabinetOffer,
+  PREORDER_STOCK,
 } from './cabinet';
 
 // Форма ответа offer-view/details — по реальному товару магазина
@@ -67,6 +68,18 @@ describe('buildPriceUpdate', () => {
     const soldOut = structuredClone(details);
     soldOut.cityInfo[0]!.pickupPoints = [{ name: '4869024_PP4', available: true, stock: { value: 0, enabled: true } }];
     expect(() => buildPriceUpdate(soldOut, '4869024', '750000000', 4899)).toThrow(KaspiCabinetOutOfStockError);
+  });
+
+  it('keeps a product on pre-order when changing its price', () => {
+    const soldOut = structuredClone(details);
+    soldOut.cityInfo[0]!.pickupPoints = [{ name: '4869024_PP4', available: true, stock: { value: 0, enabled: true } }];
+    expect(buildPriceUpdate(soldOut, '4869024', '750000000', 4899, 3).availabilities[0]).toEqual({
+      available: 'yes',
+      storeId: '4869024_PP4',
+      preOrder: 3,
+      stockEnabled: true,
+      stockCount: PREORDER_STOCK,
+    });
   });
 
   it('rejects an invalid price', () => {
@@ -146,7 +159,13 @@ describe('mapCabinetOffer', () => {
       minPrice: 4990,
       stock: 5,
       available: true,
+      preOrder: null,
     });
+  });
+
+  it('reads pre-order days of a product on pre-order', () => {
+    const onPreOrder = { ...offer, availabilities: [{ available: 'yes', storeId: 'm_PP4', stockCount: null, preOrder: 3, stockSpecified: false }] };
+    expect(mapCabinetOffer(onPreOrder)).toMatchObject({ preOrder: 3, stock: null });
   });
 
   it('reports unknown stock when no warehouse has it specified', () => {

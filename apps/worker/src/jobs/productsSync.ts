@@ -41,6 +41,7 @@ export async function syncProducts(
       category: offer.category,
       stock: offer.stock ?? 0,
       available: true,
+      preOrder: offer.preOrder,
     };
     const where = { shopId_kaspiSku: { shopId, kaspiSku: offer.sku } };
     const existing = await prisma.product.findUnique({ where, select: { id: true } });
@@ -59,7 +60,7 @@ export async function syncProducts(
 
   const removed = await prisma.product.updateMany({
     where: { shopId, available: true, kaspiSku: { notIn: offers.map((o) => o.sku) } },
-    data: { available: false },
+    data: { available: false, preOrder: null },
   });
   result.removedFromSale = removed.count;
 

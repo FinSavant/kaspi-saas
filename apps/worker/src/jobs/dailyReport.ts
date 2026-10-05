@@ -87,7 +87,8 @@ async function shopReport(shopId: string, day: { from: Date; to: Date }): Promis
   const newOrders = created.filter((o) => !NOT_SOLD_STATUSES.has(o.status));
   const cancelled = created.length - newOrders.length;
   const lowStock = await prisma.product.findMany({
-    where: { shopId, available: true, stock: { lte: LOW_STOCK } },
+    // Товары на предзаказе не «заканчиваются»: остатка у них нет по определению
+    where: { shopId, available: true, preOrder: null, stock: { lte: LOW_STOCK } },
     orderBy: [{ stock: 'asc' }, { name: 'asc' }],
     select: { name: true, stock: true },
   });

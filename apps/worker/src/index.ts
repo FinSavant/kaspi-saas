@@ -14,6 +14,7 @@ import { prisma } from '@kaspi/db';
 import { createStorage } from '@kaspi/storage';
 import { Queue, Worker } from 'bullmq';
 import { sendDailyReports } from './jobs/dailyReport';
+import { applyPreorders } from './jobs/preorder';
 import { syncOrders } from './jobs/ordersSync';
 import { syncProducts } from './jobs/productsSync';
 import { enqueueDueProducts, repriceProduct } from './jobs/repricer';
@@ -69,7 +70,29 @@ await reportsQueue.upsertJobScheduler(
   { name: 'daily', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
 );
 
+// Автопредзаказ закончившихся товаров — каждые 5 минут по всем магазинам
+const preorderQueue = new Queue(QUEUES.preorder, { connection });
+await preorderQueue.upsertJobScheduler(
+  'preorder',
+  { every: 5 * 60_000 },
+  { name: 'preorder', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
+);
+
+async function preordersForAllShops() {
+  const shops = await prisma.shop.findMany({ where: { products: { some: { preorderDays: { gt: 0 } } } }, select: { id: true } });
+  const results = [];
+  for (const shop of shops) {
+    try {
+      results.push({ shopId: shop.id, ...(await applyPreorders(shop.id)) });
+    } catch (error) {
+      results.push({ shopId: shop.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
 const workers = [
+  new Worker(QUEUES.preorder, preordersForAllShops, { connection }),
   new Worker<ReportJob>(QUEUES.reports, async (job) => sendDailyReports(job.data.chatId), { connection }),
   new Worker<RepricerJob>(
     QUEUES.repricer,
@@ -98,7 +121,7 @@ for (const worker of workers) {
 
 const shutdown = async () => {
   await Promise.all(workers.map((w) => w.close()));
-  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close()]);
+  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close()]);
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

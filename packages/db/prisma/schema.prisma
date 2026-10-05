@@ -94,6 +94,10 @@ model Product {
   costPrice Int?
   stock     Int      @default(0)
   available Boolean  @default(true)
+  // Настройка: на сколько дней ставить на предзаказ, когда товар закончился; null — не ставить
+  preorderDays Int?
+  // Сейчас в Kaspi: дней предзаказа (из кабинета); null — не на предзаказе
+  preOrder     Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

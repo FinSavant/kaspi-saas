@@ -4,6 +4,7 @@ export const COL = {
   cost: 'bg-rose-50',
   bot: 'bg-amber-50',
   toggle: 'bg-emerald-50',
+  preorder: 'bg-indigo-50',
 };
 
 export const HEADERS: { label: string; className: string }[] = [
@@ -15,6 +16,7 @@ export const HEADERS: { label: string; className: string }[] = [
   { label: 'Мин. цена', className: `${COL.bot} text-right text-amber-900` },
   { label: 'Макс. цена', className: `${COL.bot} text-right text-amber-900` },
   { label: 'Шаг', className: `${COL.bot} text-right text-amber-900` },
+  { label: 'Предзаказ, дн.', className: `${COL.preorder} text-right text-indigo-800` },
   { label: 'Бот', className: `${COL.toggle} text-center text-emerald-800` },
   { label: '', className: '' },
 ];

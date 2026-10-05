@@ -15,6 +15,8 @@ const FILTERS: { key: string; label: string; test: (p: ProductView) => boolean }
   { key: 'nobot', label: 'Бот выключен', test: (p) => !botOn(p) },
   { key: 'open', label: 'Открытые карточки', test: isOpen },
   { key: 'opennobot', label: 'Открытые без бота', test: (p) => isOpen(p) && !botOn(p) },
+  { key: 'preorder', label: 'На предзаказе', test: (p) => !!p.preOrder },
+  { key: 'nopreorder', label: 'Без предзаказа', test: (p) => !p.preorderDays && !p.preOrder },
 ];
 
 const collator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });

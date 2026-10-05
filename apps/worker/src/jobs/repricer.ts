@@ -113,7 +113,10 @@ export async function repriceProduct(
 
   if (options.publish) {
     try {
-      await withCabinet(shop, (client) => client.updatePrice(shop.merchantId, product.kaspiSku, shop.cityId, decision.price));
+      // Товар на предзаказе остаётся на предзаказе после смены цены
+      await withCabinet(shop, (client) =>
+        client.updatePrice(shop.merchantId, product.kaspiSku, shop.cityId, decision.price, product.preOrder),
+      );
     } catch (error) {
       if (error instanceof KaspiCabinetOutOfStockError) {
         // Закончился: не трогаем, чтобы Kaspi снял его с продажи; бот вернётся к нему после поставки

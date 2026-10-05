@@ -6,6 +6,7 @@ export const QUEUES = {
   waybills: 'waybills',
   productsSync: 'products-sync',
   reports: 'reports',
+  preorder: 'preorder',
 } as const;
 
 /** Ежедневный отчёт в Telegram; без chatId — всем привязанным чатам. */

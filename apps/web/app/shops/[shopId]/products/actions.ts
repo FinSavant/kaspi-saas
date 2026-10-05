@@ -27,13 +27,16 @@ export async function saveProduct(_prev: SaveState, formData: FormData): Promise
     const floorPrice = parseTenge(formData, 'floorPrice');
     const ceilingPrice = parseTenge(formData, 'ceilingPrice');
     const step = parseTenge(formData, 'step');
+    const preorderRaw = String(formData.get('preorderDays') ?? '').trim();
+    if (preorderRaw !== '' && !/^\d{1,2}$/.test(preorderRaw)) throw new Error('Предзаказ — число дней, например 3.');
+    const preorderDays = preorderRaw === '' || preorderRaw === '0' ? null : Number(preorderRaw);
 
     if (enabled && !floorPrice) return { error: 'Чтобы включить бота, укажите минимальную цену.' };
     if (floorPrice && ceilingPrice && ceilingPrice < floorPrice) {
       return { error: 'Максимальная цена не может быть ниже минимальной.' };
     }
 
-    await api(`/products/${productId}`, { method: 'PATCH', body: { costPrice } });
+    await api(`/products/${productId}`, { method: 'PATCH', body: { costPrice, preorderDays } });
     if (floorPrice) {
       await api(`/products/${productId}/repricer`, {
         method: 'PUT',

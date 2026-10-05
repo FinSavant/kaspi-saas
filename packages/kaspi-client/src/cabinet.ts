@@ -103,7 +103,41 @@ export interface PriceUpdatePayload {
   sku: string;
   model: string;
   cityPrices: { cityId: string; value: number }[];
-  availabilities: { available: 'yes'; storeId: string; stockCount?: number }[];
+  /** preOrder — дней предзаказа, как одноимённое поле прайс-листа Kaspi. */
+  availabilities: { available: 'yes'; storeId: string; stockCount?: number; stockEnabled?: boolean; preOrder?: number }[];
+}
+
+/**
+ * Остаток, который ставится складу с учётом остатков на время предзаказа: с нулём Kaspi
+ * считает товар закончившимся и снимает с продажи. Так же делает Okto (Zoomia).
+ */
+export const PREORDER_STOCK = 999;
+
+/**
+ * Предзаказ на `days` дней (null — снять): все включённые склады остаются «в наличии»,
+ * цены по городам — прежние, складам ставится остаток PREORDER_STOCK.
+ */
+export function buildPreOrderUpdate(details: any, merchantId: string, days: number | null): PriceUpdatePayload {
+  if (days !== null && (!Number.isInteger(days) || days <= 0)) throw new RangeError(`Invalid pre-order days: ${days}`);
+  const cityPrices: PriceUpdatePayload['cityPrices'] = [];
+  const availabilities: PriceUpdatePayload['availabilities'] = [];
+  for (const city of Array.isArray(details?.cityInfo) ? details.cityInfo : []) {
+    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter((p: any) => p?.available === true);
+    if (!city?.price || points.length === 0) continue;
+    cityPrices.push({ cityId: String(city.id), value: Number(city.price) });
+    for (const point of points) {
+      availabilities.push({
+        available: 'yes',
+        storeId: String(point.name),
+        ...(days
+          ? // У снятого с продажи товара Kaspi не отдаёт данные об учёте остатков — ставим остаток всегда
+            { preOrder: days, stockEnabled: true, stockCount: PREORDER_STOCK }
+          : { stockCount: point.stock?.enabled ? Number(point.stock.value ?? 0) : undefined }),
+      });
+    }
+  }
+  if (cityPrices.length === 0) throw new KaspiCabinetError(200, '', `Product ${details?.sku} has no enabled warehouses`);
+  return { merchantUid: merchantId, sku: String(details.sku), model: String(details.title ?? ''), cityPrices, availabilities };
 }
 
 /** Товар закончился на всех складах города: цену не меняем, чтобы не вернуть его в продажу. */
@@ -117,21 +151,29 @@ const hasStock = (point: any) => point?.available === true && !(point.stock?.ena
  * меняется только цена в городе `cityId`. Склады передаются те же, что сейчас
  * включены, с теми же остатками, — иначе Kaspi может снять наличие. Склады с
  * нулевым остатком не передаются: «в наличии» с нулём вернуло бы закончившийся
- * товар в продажу вместо архива.
+ * товар в продажу вместо архива. Товар на предзаказе (`preOrder` дней) остаётся
+ * на предзаказе: Kaspi не отдаёт предзаказ в details, поэтому он передаётся сюда.
  */
-export function buildPriceUpdate(details: any, merchantId: string, cityId: string, price: number): PriceUpdatePayload {
+export function buildPriceUpdate(
+  details: any,
+  merchantId: string,
+  cityId: string,
+  price: number,
+  preOrder: number | null = null,
+): PriceUpdatePayload {
   if (!Number.isInteger(price) || price <= 0) throw new RangeError(`Invalid price: ${price}`);
 
   const cityPrices: PriceUpdatePayload['cityPrices'] = [];
   const availabilities: PriceUpdatePayload['availabilities'] = [];
   const cities: any[] = Array.isArray(details?.cityInfo) ? details.cityInfo : [];
+  const enabled = (p: any) => p?.available === true;
   const target = cities.find((c) => String(c?.id) === cityId);
-  const targetPoints = (Array.isArray(target?.pickupPoints) ? target.pickupPoints : []).filter((p: any) => p?.available === true);
-  if (target?.price && targetPoints.length > 0 && !targetPoints.some(hasStock)) {
+  const targetPoints = (Array.isArray(target?.pickupPoints) ? target.pickupPoints : []).filter(enabled);
+  if (!preOrder && target?.price && targetPoints.length > 0 && !targetPoints.some(hasStock)) {
     throw new KaspiCabinetOutOfStockError(200, '', `Product ${details?.sku} is out of stock in city ${cityId}`);
   }
   for (const city of cities) {
-    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter(hasStock);
+    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter(preOrder ? enabled : hasStock);
     if (!city?.price || points.length === 0) continue;
 
     cityPrices.push({ cityId: String(city.id), value: String(city.id) === cityId ? price : Number(city.price) });
@@ -139,7 +181,9 @@ export function buildPriceUpdate(details: any, merchantId: string, cityId: strin
       availabilities.push({
         available: 'yes',
         storeId: String(point.name),
-        stockCount: point.stock?.enabled ? Number(point.stock.value ?? 0) : undefined,
+        ...(preOrder
+          ? { preOrder, stockEnabled: true, stockCount: PREORDER_STOCK }
+          : { stockCount: point.stock?.enabled ? Number(point.stock.value ?? 0) : undefined }),
       });
     }
   }
@@ -167,6 +211,8 @@ export interface CabinetOffer {
   /** Сумма остатков по складам, где товар в наличии; null — остатки не указаны. */
   stock: number | null;
   available: boolean;
+  /** Дней предзаказа, если товар сейчас на предзаказе. */
+  preOrder: number | null;
 }
 
 export class KaspiCabinetClient {
@@ -249,8 +295,16 @@ export class KaspiCabinetClient {
   }
 
   /** Меняет цену товара в одном городе так же, как форма цены в кабинете. */
-  async updatePrice(merchantId: string, sku: string, cityId: string, price: number): Promise<void> {
-    const payload = buildPriceUpdate(await this.getOfferDetails(merchantId, sku), merchantId, cityId, price);
+  async updatePrice(merchantId: string, sku: string, cityId: string, price: number, preOrder: number | null = null): Promise<void> {
+    await this.uploadOffer(buildPriceUpdate(await this.getOfferDetails(merchantId, sku), merchantId, cityId, price, preOrder));
+  }
+
+  /** Ставит товар на предзаказ на `days` дней или снимает предзаказ (null); возвращает ответ Kaspi. */
+  async setPreOrder(merchantId: string, sku: string, days: number | null): Promise<string> {
+    return this.uploadOffer(buildPreOrderUpdate(await this.getOfferDetails(merchantId, sku), merchantId, days));
+  }
+
+  private async uploadOffer(payload: PriceUpdatePayload): Promise<string> {
     const res = await this.request(`${this.urls.mc}/pricefeed/upload/merchant/process`, {
       method: 'POST',
       headers: {
@@ -262,7 +316,7 @@ export class KaspiCabinetClient {
       body: JSON.stringify(payload),
     });
     await this.ensureOk(res);
-    await res.arrayBuffer().catch(() => undefined);
+    return res.text().catch(() => '');
   }
 
   private async ensureOk(res: Response): Promise<void> {
@@ -351,6 +405,7 @@ export function mapCabinetOffer(raw: any): CabinetOffer {
     : specified.filter((a) => a.available === 'yes').reduce((sum, a) => sum + (Number(a.stockCount) || 0), 0);
 
   const minPrice = Number(raw?.minPrice);
+  const preOrder = Math.max(0, ...availabilities.filter((a) => a?.available === 'yes').map((a) => Number(a?.preOrder) || 0));
   return {
     sku: String(raw?.sku ?? ''),
     masterSku: raw?.masterSku != null ? String(raw.masterSku) : null,
@@ -361,5 +416,6 @@ export function mapCabinetOffer(raw: any): CabinetOffer {
     minPrice: minPrice > 0 ? Math.round(minPrice) : null,
     stock,
     available: raw?.available === true,
+    preOrder: preOrder > 0 ? preOrder : null,
   };
 }
