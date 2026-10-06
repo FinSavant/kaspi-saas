@@ -60,6 +60,8 @@ export async function syncOrders(shopId: string, options: { full?: boolean } = {
       paymentMode: order.paymentMode,
       isKaspiDelivery: order.isKaspiDelivery,
       express: order.express,
+      customerName: order.customerName,
+      plannedDeliveryDate: order.plannedDeliveryDate,
       syncedAt: startedAt,
     };
     await prisma.order.upsert({

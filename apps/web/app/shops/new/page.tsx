@@ -9,7 +9,7 @@ export default function NewShopPage() {
       </Link>
       <h1 className="text-2xl font-bold tracking-tight">Подключить магазин</h1>
       <p className="text-sm text-slate-600">
-        После подключения заказы за год загрузятся сами (несколько минут), дальше — раз в 30 минут.
+        После подключения заказы за год загрузятся сами (несколько минут), дальше — раз в 5 минут.
       </p>
       <NewShopForm />
     </div>

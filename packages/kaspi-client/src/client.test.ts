@@ -19,6 +19,8 @@ const order = (overrides: Partial<KaspiOrder> = {}): KaspiOrder => ({
   paymentMode: 'PREPAID',
   isKaspiDelivery: true,
   express: false,
+  customerName: null,
+  plannedDeliveryDate: null,
   ...overrides,
 });
 

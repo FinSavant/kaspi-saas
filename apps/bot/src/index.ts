@@ -52,8 +52,8 @@ const HELP = [
   '',
   '/report — прислать отчёт за вчера сейчас',
   '/print — склеить накладные из «Передачи» для термопринтера (/print 4 — A4 по 4 на листе)',
-  '/repricer_on — запустить демпинг-бот на выбранных товарах',
-  '/repricer_off — поставить демпинг-бот на паузу',
+  '/repricer_on — запустить робота на выбранных товарах',
+  '/repricer_off — поставить робота на паузу',
 ].join('\n');
 
 bot.start(async (ctx) => {
@@ -104,8 +104,8 @@ async function setRepricer(chatId: number, enabled: boolean): Promise<string> {
     where: { enabled: true, product: { shopId: { in: shopIds } } },
   });
   return enabled
-    ? `Демпинг-бот работает. Товаров, на которых он включён: ${selected}.`
-    : `Демпинг-бот на паузе. Выбранные товары (${selected}) сохранены.`;
+    ? `Робот работает. Товаров, на которых он включён: ${selected}.`
+    : `Робот на паузе. Выбранные товары (${selected}) сохранены.`;
 }
 
 bot.command('repricer_on', async (ctx) => ctx.reply(await setRepricer(ctx.chat.id, true)));

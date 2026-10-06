@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { FeesForm } from '../analytics/forms';
-import { CabinetLoginForm, ReportNowButton } from '../../ShopForms';
+import { CabinetLoginForm, ChatLoginForm, ReportNowButton } from '../../ShopForms';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +12,8 @@ interface ShopSettings {
   hasApiToken: boolean;
   hasCabinetSession: boolean;
   hasCabinetLogin: boolean;
+  hasChatSession: boolean;
+  chatPhone: string | null;
   productsSyncedAt: string | null;
   ordersSyncedAt: string | null;
   repricerEnabled: boolean;
@@ -60,7 +62,7 @@ export default async function SettingsPage({
 
       {added && (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          Магазин подключён. Заказы за год загружаются (несколько минут). Для товаров и демпинг-бота войдите в кабинет
+          Магазин подключён. Заказы за год загружаются (несколько минут). Для товаров и робота войдите в кабинет
           Kaspi ниже.
         </p>
       )}
@@ -97,12 +99,12 @@ export default async function SettingsPage({
         <Row label="API-токен (заказы, накладные, аналитика)">
           <Status ok={s.hasApiToken} okText="Подключён" badText="Не подключён" />
         </Row>
-        <Row label="Кабинет продавца (товары, демпинг-бот)">
+        <Row label="Кабинет продавца (товары, робот)">
           <Status ok={s.hasCabinetSession} okText="Вход выполнен" badText="Нужен вход" />
         </Row>
         <Row label="Товары синхронизированы">{formatDate(s.productsSyncedAt)}</Row>
         <Row label="Заказы загружены">{formatDate(s.ordersSyncedAt)}</Row>
-        <Row label="Демпинг-бот">
+        <Row label="Робот">
           <Status ok={s.repricerEnabled} okText="Работает" badText="На паузе" />
         </Row>
         <p className="mt-2 text-xs text-slate-500">
@@ -113,7 +115,7 @@ export default async function SettingsPage({
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-1 font-semibold">Вход в кабинет Kaspi</h2>
         <p className="mb-3 text-sm text-slate-600">
-          Нужен для синхронизации товаров и демпинг-бота. Используйте отдельного пользователя кабинета с правом «Загрузка
+          Нужен для синхронизации товаров и робота. Используйте отдельного пользователя кабинета с правом «Загрузка
           товаров». Если Kaspi пришлёт код на почту, здесь появится поле для него.
         </p>
         <CabinetLoginForm shopId={shopId} hasSavedLogin={s.hasCabinetLogin} />
@@ -126,9 +128,23 @@ export default async function SettingsPage({
       </section>
 
       <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="font-semibold">Чат с покупателями (отзывы)</h2>
+        <p className="text-sm text-slate-600">
+          Kaspi открывает чат только входу по номеру телефона. Добавьте в кабинете Kaspi («Управление пользователями»)
+          отдельный номер с правами на заказы и войдите им здесь — код придёт в SMS.
+        </p>
+        {s.hasChatSession && (
+          <Row label="Подключён номер">
+            <Status ok okText={s.chatPhone ?? 'подключён'} badText="" />
+          </Row>
+        )}
+        <ChatLoginForm shopId={shopId} />
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="font-semibold">Telegram</h2>
         <p className="text-sm text-slate-600">
-          Каждый день в 09:10 — отчёт за вчера по всем магазинам: заказы, выдачи, сколько поступит на счёт, демпинг-бот
+          Каждый день в 09:10 — отчёт за вчера по всем магазинам: заказы, выдачи, сколько поступит на счёт, робот
           (первые по цене и упёршиеся в минимальную цену) и товары с остатком 3 шт и меньше.
         </p>
         {!telegram.configured ? (

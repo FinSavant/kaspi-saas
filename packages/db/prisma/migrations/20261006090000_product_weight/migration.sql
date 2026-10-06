@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Product" ADD COLUMN "weightKg" DOUBLE PRECISION,
+ADD COLUMN "weightManual" BOOLEAN NOT NULL DEFAULT false;

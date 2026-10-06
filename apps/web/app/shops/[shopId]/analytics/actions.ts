@@ -19,7 +19,10 @@ export async function saveCost(_prev: FormState, formData: FormData): Promise<Fo
   const shopId = String(formData.get('shopId'));
   try {
     const costPrice = parseOptionalNumber(formData.get('costPrice'), /^\d+$/, 'Себестоимость — целое число в тенге.');
-    await api(`/products/${String(formData.get('productId'))}`, { method: 'PATCH', body: { costPrice } });
+    const productId = String(formData.get('productId') ?? '');
+    // Товара нет в каталоге — себестоимость задаётся по артикулу (сервер создаст скрытую карточку)
+    if (productId) await api(`/products/${productId}`, { method: 'PATCH', body: { costPrice } });
+    else await api(`/shops/${shopId}/sku-cost`, { method: 'PUT', body: { sku: String(formData.get('sku')), costPrice } });
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось сохранить.' };
   }

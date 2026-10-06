@@ -2,12 +2,25 @@
 
 import { useActionState, useRef, type FocusEvent } from 'react';
 import { saveProduct, syncProducts, type SaveState, type SyncState } from './actions';
+import { RowCheckbox } from './Bulk';
+import { PriceEdit, StoresCell, type StoreView } from './InlineEdit';
 import { COL } from './columns';
 
 export interface ProductView {
   id: string;
   kaspiSku: string;
+  kaspiMasterSku: string | null;
   name: string;
+  imageUrl: string | null;
+  shopUrl: string | null;
+  /** Цена, ниже которой прибыль меньше 5%; null — нет себестоимости или комиссии. */
+  minProfitablePrice: number | null;
+  /** Вес, кг: из карточки Kaspi или введённый вручную. */
+  weightKg: number | null;
+  /** Доставка по тарифу Kaspi при этой цене, ₸. */
+  minPriceDelivery: number | null;
+  /** Склады из кабинета; null — ещё не синхронизировались. */
+  stores: StoreView[] | null;
   price: number;
   costPrice: number | null;
   stock: number;
@@ -17,6 +30,10 @@ export interface ProductView {
   preorderDays: number | null;
   /** Сейчас на предзаказе в Kaspi, дней. */
   preOrder: number | null;
+  /** Место по цене в карточке по последней проверке (null — не проверялось за сутки). */
+  position: number | null;
+  /** Самая низкая цена конкурента по последней проверке. */
+  topCompetitorPrice: number | null;
   repricerSetting: {
     enabled: boolean;
     floorPrice: number;
@@ -27,16 +44,48 @@ export interface ProductView {
 
 const INPUT = 'w-24 rounded border bg-white px-2 py-1 text-right tabular-nums';
 
-function SellersBadge({ count }: { count: number | null }) {
-  if (count === null) return <span className="text-xs text-slate-400">не проверено</span>;
-  return count > 1 ? (
-    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-violet-800">
-      открытая · {count}
-    </span>
-  ) : (
-    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs whitespace-nowrap text-slate-500">только вы</span>
+/** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
+const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
+
+const PILL ='inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap';
+
+/**
+ * Позиция по цене в карточке, как в Okto: «Топ 1» зелёная плашка, «Ниже №1» красная
+ * с местом; без конкурентов и без проверки — серые. Подпись — число продавцов.
+ */
+function PositionCell({ product }: { product: ProductView }) {
+  const { position, sellersCount } = product;
+  const sellers = sellersCount !== null && sellersCount > 1 && (
+    <div className="mt-1 text-xs whitespace-nowrap text-slate-500">продавцов: {sellersCount}</div>
+  );
+  if (position === 1) {
+    return (
+      <>
+        <span className={`${PILL} bg-emerald-500 text-white`}>Топ 1 ✓</span>
+        {sellers}
+      </>
+    );
+  }
+  if (position !== null) {
+    return (
+      <>
+        <span className={`${PILL} bg-red-500 text-white`}>Ниже №1</span>
+        <div className="mt-1 text-xs font-medium whitespace-nowrap text-red-600">сейчас №{position}</div>
+        {sellers}
+      </>
+    );
+  }
+  if (sellersCount === 1) return <span className={`${PILL} bg-slate-100 text-slate-500`}>Нет конкурентов</span>;
+  return (
+    <>
+      <span className={`${PILL} bg-slate-100 text-slate-400`}>—</span>
+      <div className="mt-1 text-xs whitespace-nowrap text-slate-400">{botOnLabel(product)}</div>
+      {sellers}
+    </>
   );
 }
+
+const botOnLabel = (p: ProductView) => (p.repricerSetting?.enabled ? 'ждёт проверки' : 'бот выкл');
 
 /**
  * Строка товара сохраняется сама: поле — когда из него уходят (или по Enter), если
@@ -56,26 +105,89 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
 
   return (
     <tr className="border-t border-slate-200 align-middle hover:bg-slate-50">
+      <td className="py-2 pl-3">
+        <RowCheckbox id={product.id} />
+      </td>
       <td className="max-w-xs px-3 py-2">
         <form id={formId} ref={formRef} action={action}>
           <input type="hidden" name="shopId" value={shopId} />
           <input type="hidden" name="productId" value={product.id} />
           <input type="hidden" name="hasSetting" value={setting ? '1' : '0'} />
         </form>
-        <div className="font-medium text-slate-900">{product.name}</div>
+        <div className="flex items-center gap-3">
+          {product.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- фото с CDN Kaspi, без оптимизации Next
+            <img src={product.imageUrl} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
+          ) : (
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
+          )}
+          {shopUrl(product) ? (
+            <a
+              href={shopUrl(product)!}
+              target="_blank"
+              rel="noreferrer"
+              title="Открыть карточку на kaspi.kz"
+              className="font-medium text-slate-900 hover:text-sky-700 hover:underline"
+            >
+              {product.name} <span className="text-xs text-slate-400">↗</span>
+            </a>
+          ) : (
+            <span className="font-medium text-slate-900">{product.name}</span>
+          )}
+        </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
       </td>
-      <td className="px-3 py-2">
-        <SellersBadge count={product.sellersCount} />
-      </td>
       <td className={`${COL.price} px-3 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
-        {product.price.toLocaleString('ru-RU')}
+        <PriceEdit shopId={shopId} productId={product.id} price={product.price} />
+        {/* Как в Okto: под нашей ценой — цена первого места, если мы не первые */}
+        {product.position !== null && product.position > 1 && product.topCompetitorPrice !== null && (
+          <div className="text-xs font-normal text-slate-500" title="Цена первого места">
+            {product.topCompetitorPrice.toLocaleString('ru-RU')} ₸
+          </div>
+        )}
       </td>
-      <td className={`px-3 py-2 text-right tabular-nums ${product.stock === 0 ? 'font-semibold text-red-600' : 'text-slate-700'}`}>
-        {product.stock}
+      <td className="px-3 py-2 text-center">
+        <PositionCell product={product} />
+      </td>
+      <td className="px-3 py-2 text-right">
+        <StoresCell shopId={shopId} productId={product.id} stores={product.stores ?? []} />
       </td>
       <td className={`${COL.cost} px-3 py-2 text-right`}>
         <input {...field} name="costPrice" defaultValue={product.costPrice ?? ''} placeholder="₸" aria-label="Себестоимость" className={`${INPUT} border-rose-300 font-semibold text-rose-800`} />
+      </td>
+      <td
+        className={`${COL.cost} px-3 py-2 text-right whitespace-nowrap tabular-nums`}
+        title={
+          product.minProfitablePrice === null
+            ? 'Укажите себестоимость — тогда посчитаю цену, ниже которой прибыль меньше 5%'
+            : `Ниже этой цены прибыль меньше 5% после комиссии с НДС, Kaspi Pay и доставки ${product.minPriceDelivery} ₸ по тарифу Kaspi для такой суммы заказа`
+        }
+      >
+        {product.minProfitablePrice === null ? (
+          <span className="text-xs text-slate-400">—</span>
+        ) : (
+          <>
+            <span className="font-bold text-rose-800">{product.minProfitablePrice.toLocaleString('ru-RU')} ₸</span>
+            {setting && setting.floorPrice < product.minProfitablePrice && (
+              <div className="text-[11px] font-semibold text-red-600">мин. цена ниже!</div>
+            )}
+          </>
+        )}
+        {/* Для заказов от 10 000 ₸ доставка Kaspi зависит от веса */}
+        {product.price >= 8000 && (
+          <label className="mt-1 flex items-center justify-end gap-1 text-[11px] font-normal text-slate-500" title="Вес для тарифа доставки Kaspi. Пусто — из карточки (или «до 5 кг»)">
+            вес
+            <input
+              {...field}
+              inputMode="decimal"
+              name="weightKg"
+              defaultValue={product.weightKg ?? ''}
+              placeholder="кг"
+              className="w-12 rounded border border-slate-300 bg-white px-1 py-0.5 text-right"
+            />
+            кг
+          </label>
+        )}
       </td>
       <td className={`${COL.bot} px-3 py-2 text-right`}>
         <input {...field} name="floorPrice" defaultValue={setting?.floorPrice ?? ''} placeholder="₸" aria-label="Минимальная цена" className={`${INPUT} border-amber-400 font-bold text-amber-900`} />
@@ -92,11 +204,13 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
           name="preorderDays"
           defaultValue={product.preorderDays ?? ''}
           placeholder="—"
-          title="Когда товар закончится, он сам встанет на предзаказ на столько дней. Пусто — не ставить."
+          title="Товар сразу встанет на предзаказ на столько дней (1–30, больше Kaspi не принимает) остатки сохранятся; Kaspi применяет минут через 10–15. Закончится — останется на предзаказе. Очистить — снять предзаказ."
           aria-label="Предзаказ, дней"
           className="w-14 rounded border border-indigo-300 bg-white px-2 py-1 text-right text-indigo-900 tabular-nums"
         />
-        {product.preOrder ? (
+        {product.preorderDays && product.preOrder !== product.preorderDays ? (
+          <div className="mt-1 text-xs whitespace-nowrap text-slate-500">ставлю в Kaspi…</div>
+        ) : product.preOrder ? (
           <div className="mt-1 text-xs font-medium whitespace-nowrap text-indigo-700">на предзаказе · {product.preOrder} д.</div>
         ) : !product.available ? (
           <div className="mt-1 text-xs whitespace-nowrap text-slate-500">снят с продажи</div>

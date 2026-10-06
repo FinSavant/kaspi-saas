@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./analytics": "./src/analytics/index.ts"
+    "./analytics": "./src/analytics/index.ts",
+    "./reviews": "./src/reviews.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

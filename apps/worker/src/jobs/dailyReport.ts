@@ -126,7 +126,7 @@ async function repricerLines(shopId: string): Promise<string[]> {
     where: { enabled: true, product: { shopId, available: true } },
     select: { productId: true, floorPrice: true, product: { select: { name: true, price: true } } },
   });
-  if (settings.length === 0) return ['🤖 Демпинг-бот: не включён ни на одном товаре'];
+  if (settings.length === 0) return ['🤖 Робот: не включён ни на одном товаре'];
 
   const logs = await prisma.competitorLog.findMany({
     where: { productId: { in: settings.map((s) => s.productId) }, capturedAt: { gte: new Date(Date.now() - 2 * 60 * 60 * 1000) } },
@@ -146,7 +146,7 @@ async function repricerLines(shopId: string): Promise<string[]> {
   const first = checked.filter((s) => s.product.price <= latest.get(s.productId)!.min);
 
   const lines = [
-    `🤖 Демпинг-бот: включён на ${settings.length} товарах`,
+    `🤖 Робот: включён на ${settings.length} товарах`,
     `🥇 Первые по цене в карточке: ${first.length} из ${checked.length}${checked.length < settings.length ? ` (нет свежих цен по ${settings.length - checked.length} — читатель цен был выключен)` : ''}`,
     `🧱 Достигли минимальной цены: ${atFloor.length}`,
   ];

@@ -15,6 +15,8 @@ const IDMC_URL = 'https://idmc.shop.kaspi.kz';
 const MC_URL = 'https://mc.shop.kaspi.kz';
 const CABINET_URL = 'https://kaspi.kz/mc/';
 const OFFERS_PAGE_SIZE = 50;
+/** Идентификатор «устройства» для чата; браузер берёт случайный и хранит в localStorage. */
+const CHAT_APP_ID = '7C1F2A9E-4B3D-4E8A-9F21-5A6B7C8D9E0F';
 const MAX_REDIRECTS = 10;
 
 interface StoredCookie {
@@ -104,7 +106,55 @@ export interface PriceUpdatePayload {
   model: string;
   cityPrices: { cityId: string; value: number }[];
   /** preOrder — дней предзаказа, как одноимённое поле прайс-листа Kaspi. */
-  availabilities: { available: 'yes'; storeId: string; stockCount?: number; stockEnabled?: boolean; preOrder?: number }[];
+  availabilities: { available: 'yes' | 'no'; storeId: string; stockCount?: number; stockEnabled?: boolean; preOrder?: number }[];
+}
+
+/** Склад товара: наличие, остаток (null — без учёта остатков) и предзаказ. */
+export interface StoreState {
+  storeId: string;
+  available: boolean;
+  stockCount: number | null;
+  preOrder: number | null;
+}
+
+/**
+ * Наличие и остатки по складам — как их задаёт продавец в таблице: склады передаются
+ * все, выключенные — «нет». Цены по городам прежние; `price` меняет цену в одном городе.
+ * Склад на предзаказе остаётся на предзаказе.
+ */
+export function buildOfferUpdate(
+  details: any,
+  merchantId: string,
+  stores: StoreState[],
+  price?: { cityId: string; value: number },
+): PriceUpdatePayload {
+  const cities: any[] = Array.isArray(details?.cityInfo) ? details.cityInfo : [];
+  const cityOf = new Map<string, any>();
+  for (const city of cities) for (const p of Array.isArray(city?.pickupPoints) ? city.pickupPoints : []) cityOf.set(String(p.name), city);
+
+  const cityPrices: PriceUpdatePayload['cityPrices'] = [];
+  for (const city of cities) {
+    const cityId = String(city.id);
+    const value = price?.cityId === cityId ? price.value : Number(city.price);
+    const sold = stores.some((s) => s.available && cityOf.get(s.storeId) === city);
+    if (sold && value > 0) cityPrices.push({ cityId, value });
+  }
+  const availabilities: PriceUpdatePayload['availabilities'] = stores.map((s) =>
+    !s.available
+      ? { available: 'no', storeId: s.storeId }
+      : s.preOrder
+        ? { available: 'yes', storeId: s.storeId, preOrder: s.preOrder, stockEnabled: true, stockCount: PREORDER_STOCK }
+        : s.stockCount !== null
+          ? { available: 'yes', storeId: s.storeId, stockEnabled: true, stockCount: s.stockCount }
+          : { available: 'yes', storeId: s.storeId },
+  );
+  if (!availabilities.some((a) => a.available === 'yes')) {
+    throw new KaspiCabinetError(200, '', 'Нужен хотя бы один склад в наличии — иначе товар уйдёт в архив.');
+  }
+  if (price && !cityPrices.some((c) => c.cityId === price.cityId)) {
+    throw new KaspiCabinetError(200, '', `Product ${details?.sku} is not on sale in city ${price.cityId}`);
+  }
+  return { merchantUid: merchantId, sku: String(details.sku), model: String(details.title ?? ''), cityPrices, availabilities };
 }
 
 /**
@@ -113,9 +163,17 @@ export interface PriceUpdatePayload {
  */
 export const PREORDER_STOCK = 999;
 
+/** Остаток склада на предзаказе: настоящий, пока товар есть, иначе PREORDER_STOCK. */
+function preOrderStock(point: any): number {
+  const value = point?.stock?.enabled ? Number(point.stock.value ?? 0) : 0;
+  return value > 0 && value !== PREORDER_STOCK ? value : PREORDER_STOCK;
+}
+
+
 /**
  * Предзаказ на `days` дней (null — снять): все включённые склады остаются «в наличии»,
- * цены по городам — прежние, складам ставится остаток PREORDER_STOCK.
+ * цены по городам — прежние, остатки — настоящие (Kaspi так принимает, применяет минут
+ * через 10–15), а закончившимся складам PREORDER_STOCK.
  */
 export function buildPreOrderUpdate(details: any, merchantId: string, days: number | null): PriceUpdatePayload {
   if (days !== null && (!Number.isInteger(days) || days <= 0)) throw new RangeError(`Invalid pre-order days: ${days}`);
@@ -131,12 +189,34 @@ export function buildPreOrderUpdate(details: any, merchantId: string, days: numb
         storeId: String(point.name),
         ...(days
           ? // У снятого с продажи товара Kaspi не отдаёт данные об учёте остатков — ставим остаток всегда
-            { preOrder: days, stockEnabled: true, stockCount: PREORDER_STOCK }
+            { preOrder: days, stockEnabled: true, stockCount: preOrderStock(point) }
           : { stockCount: point.stock?.enabled ? Number(point.stock.value ?? 0) : undefined }),
       });
     }
   }
   if (cityPrices.length === 0) throw new KaspiCabinetError(200, '', `Product ${details?.sku} has no enabled warehouses`);
+  return { merchantUid: merchantId, sku: String(details.sku), model: String(details.title ?? ''), cityPrices, availabilities };
+}
+
+/**
+ * Снятие предзаказа после поставки: склады с настоящим остатком передаются с этим
+ * остатком и без preOrder, цены — прежние. Склады без настоящего остатка не передаются,
+ * иначе «в наличии» с нулём держало бы закончившийся товар в продаже.
+ */
+export function buildPreOrderRemoval(details: any, merchantId: string, stocks: Map<string, number>): PriceUpdatePayload {
+  const cityPrices: PriceUpdatePayload['cityPrices'] = [];
+  const availabilities: PriceUpdatePayload['availabilities'] = [];
+  for (const city of Array.isArray(details?.cityInfo) ? details.cityInfo : []) {
+    const points = (Array.isArray(city?.pickupPoints) ? city.pickupPoints : []).filter(
+      (p: any) => p?.available === true && (stocks.get(String(p.name)) ?? 0) > 0,
+    );
+    if (!city?.price || points.length === 0) continue;
+    cityPrices.push({ cityId: String(city.id), value: Number(city.price) });
+    for (const point of points) {
+      availabilities.push({ available: 'yes', storeId: String(point.name), stockEnabled: true, stockCount: stocks.get(String(point.name))! });
+    }
+  }
+  if (cityPrices.length === 0) throw new KaspiCabinetError(200, '', `Product ${details?.sku} has no warehouses with stock`);
   return { merchantUid: merchantId, sku: String(details.sku), model: String(details.title ?? ''), cityPrices, availabilities };
 }
 
@@ -182,7 +262,7 @@ export function buildPriceUpdate(
         available: 'yes',
         storeId: String(point.name),
         ...(preOrder
-          ? { preOrder, stockEnabled: true, stockCount: PREORDER_STOCK }
+          ? { preOrder, stockEnabled: true, stockCount: preOrderStock(point) }
           : { stockCount: point.stock?.enabled ? Number(point.stock.value ?? 0) : undefined }),
       });
     }
@@ -213,6 +293,29 @@ export interface CabinetOffer {
   available: boolean;
   /** Дней предзаказа, если товар сейчас на предзаказе. */
   preOrder: number | null;
+  /** Склады, где товар в наличии: остаток (null — без учёта) и предзаказ. */
+  stores: StoreState[];
+  /** Маленькое фото товара. */
+  imageUrl: string | null;
+  /** Карточка товара на публичной витрине kaspi.kz. */
+  shopUrl: string | null;
+}
+
+/**
+ * На предзаказе, но на складе появился настоящий остаток: продавец вписал его после
+ * поставки, а предзаказ не снял. Остаток PREORDER_STOCK ставим мы сами — он не настоящий.
+ */
+/** Настоящие остатки по складам { storeId: шт } — без PREORDER_STOCK и пустых складов. */
+export function realStocks(offer: CabinetOffer): Record<string, number> {
+  return Object.fromEntries(
+    offer.stores
+      .filter((s) => s.available && s.stockCount !== null && s.stockCount > 0 && s.stockCount !== PREORDER_STOCK)
+      .map((s) => [s.storeId, s.stockCount!]),
+  );
+}
+
+export function isRestockedOnPreOrder(offer: CabinetOffer): boolean {
+  return !!offer.preOrder && offer.stores.some((s) => s.available && s.stockCount !== null && s.stockCount > 0 && s.stockCount !== PREORDER_STOCK);
 }
 
 export class KaspiCabinetClient {
@@ -236,6 +339,26 @@ export class KaspiCabinetClient {
     return this.finishLogin(data, merchantId);
   }
 
+  /**
+   * Вход по номеру телефона (так же, как вкладка «По номеру» на странице входа):
+   * Kaspi отправляет SMS с кодом, его передают в submitSmsCode. Чат с покупателями
+   * в кабинете доступен только такому входу. `phone` — 10 цифр без +7.
+   * Возвращает номер, на который ушло SMS (Kaspi его маскирует).
+   */
+  async startPhoneLogin(phone: string): Promise<string> {
+    const digits = phone.replace(/\D/g, '').replace(/^[78](?=\d{10}$)/, '');
+    if (!/^\d{10}$/.test(digits)) throw new KaspiCabinetError(400, '', 'Номер телефона — 10 цифр после +7.');
+    this.trace.length = 0;
+    await this.startAuthorization();
+    const data = await this.postLogin({ _ph: digits });
+    return String(data?.phone ?? digits);
+  }
+
+  async submitSmsCode(code: string, merchantId: string): Promise<CabinetLoginResult> {
+    const data = await this.postLogin({ _c: code.trim() });
+    return this.finishLogin(data, merchantId);
+  }
+
   async submitMfaCode(code: string, email: string, merchantId: string): Promise<CabinetLoginResult> {
     const data = await this.postLogin({ _m_c: code, _r_d: true, _u: email });
     return this.finishLogin(data, merchantId);
@@ -251,8 +374,44 @@ export class KaspiCabinetClient {
     return !new URL(finalUrl).hostname.startsWith(new URL(this.urls.idmc).hostname);
   }
 
+  /**
+   * Запрос к чату с покупателями (тот же API, что у окна сообщений в кабинете).
+   * Работает только с сессией входа по телефону; иначе Kaspi отвечает INVALID_AUTH_TICKET.
+   */
+  async chat<T = any>(path: string, body: unknown, merchantId: string): Promise<T> {
+    const res = await this.request(`${this.urls.mc}/chats/api/mobile${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/plain, */*',
+        Origin: 'https://kaspi.kz',
+        Referer: this.urls.cabinet,
+        'X-App-ID': CHAT_APP_ID,
+        'X-Platform-Type': 'WEB',
+        'X-Auth-Type': 'Webchat',
+        'X-Locale': 'ru-RU',
+        'X-Merchant-ID': merchantId,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    const json: any = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      const code = json?.error?.code ?? res.status;
+      const message = `Kaspi chat: ${code}`;
+      if (res.status === 401 || res.status === 403) throw new KaspiCabinetAuthError(res.status, text.slice(0, 300), message);
+      throw new KaspiCabinetError(res.status, text.slice(0, 300), message);
+    }
+    return json?.data as T;
+  }
+
   /** Все товары вкладки «В продаже». */
-  async listActiveOffers(merchantId: string): Promise<CabinetOffer[]> {
+  listActiveOffers(merchantId: string): Promise<CabinetOffer[]> {
+    return this.listOffers(merchantId, true);
+  }
+
+  /** Все товары вкладки «В продаже» (available) или «Сняты с продажи». */
+  async listOffers(merchantId: string, available: boolean): Promise<CabinetOffer[]> {
     const offers: CabinetOffer[] = [];
 
     for (let start = 0; ; ) {
@@ -272,7 +431,7 @@ export class KaspiCabinetClient {
           Referer: this.urls.cabinet,
           'x-merchant': merchantId,
         },
-        body: JSON.stringify({ available: true }),
+        body: JSON.stringify({ available }),
       });
       await this.ensureOk(res);
       const body: any = await res.json();
@@ -302,6 +461,29 @@ export class KaspiCabinetClient {
   /** Ставит товар на предзаказ на `days` дней или снимает предзаказ (null); возвращает ответ Kaspi. */
   async setPreOrder(merchantId: string, sku: string, days: number | null): Promise<string> {
     return this.uploadOffer(buildPreOrderUpdate(await this.getOfferDetails(merchantId, sku), merchantId, days));
+  }
+
+  /**
+   * Один товар со свежими складами и остатками. Поиска по артикулу у списка кабинета нет
+   * (параметр t игнорируется), поэтому список листается: «В продаже», затем «Сняты».
+   */
+  async getOffer(merchantId: string, sku: string): Promise<CabinetOffer | null> {
+    for (const available of [true, false]) {
+      const offer = (await this.listOffers(merchantId, available)).find((o) => o.sku === sku);
+      if (offer) return offer;
+    }
+    return null;
+  }
+
+  /** Наличие и остатки по складам, при необходимости — и цена в одном городе (правка из таблицы). */
+  async updateOffer(merchantId: string, sku: string, stores: StoreState[], price?: { cityId: string; value: number }): Promise<string> {
+    return this.uploadOffer(buildOfferUpdate(await this.getOfferDetails(merchantId, sku), merchantId, stores, price));
+  }
+
+  /** Снимает предзаказ, оставляя настоящие остатки со складов из списка товаров. */
+  async removePreOrder(merchantId: string, offer: CabinetOffer): Promise<string> {
+    const stocks = new Map(Object.entries(realStocks(offer)));
+    return this.uploadOffer(buildPreOrderRemoval(await this.getOfferDetails(merchantId, offer.sku), merchantId, stocks));
   }
 
   private async uploadOffer(payload: PriceUpdatePayload): Promise<string> {
@@ -405,7 +587,15 @@ export function mapCabinetOffer(raw: any): CabinetOffer {
     : specified.filter((a) => a.available === 'yes').reduce((sum, a) => sum + (Number(a.stockCount) || 0), 0);
 
   const minPrice = Number(raw?.minPrice);
-  const preOrder = Math.max(0, ...availabilities.filter((a) => a?.available === 'yes').map((a) => Number(a?.preOrder) || 0));
+  const stores = availabilities
+    .filter((a) => a?.storeId)
+    .map((a) => ({
+      storeId: String(a.storeId),
+      available: a.available === 'yes',
+      stockCount: a.stockSpecified && a.stockCount != null ? Number(a.stockCount) : null,
+      preOrder: a.available === 'yes' && Number(a.preOrder) > 0 ? Number(a.preOrder) : null,
+    }));
+  const preOrder = Math.max(0, ...stores.map((s) => s.preOrder ?? 0));
   return {
     sku: String(raw?.sku ?? ''),
     masterSku: raw?.masterSku != null ? String(raw.masterSku) : null,
@@ -417,5 +607,16 @@ export function mapCabinetOffer(raw: any): CabinetOffer {
     stock,
     available: raw?.available === true,
     preOrder: preOrder > 0 ? preOrder : null,
+    stores,
+    imageUrl: firstImage(raw),
+    shopUrl: typeof raw?.shopLink === 'string' && raw.shopLink.startsWith('/') ? `https://kaspi.kz/shop${raw.shopLink}` : null,
   };
+}
+
+/** Маленькое фото товара с CDN Kaspi (imagesV2), иначе собранное из старого поля images. */
+function firstImage(raw: any): string | null {
+  const v2 = Array.isArray(raw?.imagesV2) ? raw.imagesV2[0] : null;
+  if (typeof v2?.small === 'string') return v2.small;
+  const path = Array.isArray(raw?.images) ? raw.images[0] : null;
+  return typeof path === 'string' ? `https://resources.cdn-kaspi.kz/img/m/p/${path}?format=gallery-small` : null;
 }

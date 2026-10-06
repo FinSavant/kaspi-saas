@@ -5,6 +5,7 @@ import {
   redisConnectionFromUrl,
   type OrdersSyncJob,
   type ProductsSyncJob,
+  type OfferEditJob,
   type ReportJob,
   type RepricerJob,
   type WaybillsJob,
@@ -14,7 +15,9 @@ import { prisma } from '@kaspi/db';
 import { createStorage } from '@kaspi/storage';
 import { Queue, Worker } from 'bullmq';
 import { sendDailyReports } from './jobs/dailyReport';
+import { editOffer } from './jobs/offerEdit';
 import { applyPreorders } from './jobs/preorder';
+import { sendReviewMessages } from './jobs/reviews';
 import { syncOrders } from './jobs/ordersSync';
 import { syncProducts } from './jobs/productsSync';
 import { enqueueDueProducts, repriceProduct } from './jobs/repricer';
@@ -22,7 +25,8 @@ import { printWaybills } from './jobs/waybills';
 
 const connection = redisConnectionFromUrl(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const TICK_MS = 60_000;
-const ORDERS_SYNC_MS = 30 * 60_000;
+// Раз в 5 минут: приветствие покупателю в чат уходит вскоре после заказа
+const ORDERS_SYNC_MS = 5 * 60_000;
 
 // Один экземпляр на весь воркер: пауза между запросами к витрине общая для
 // репрайсера и подсчёта продавцов при синхронизации товаров
@@ -52,7 +56,7 @@ console.log(`[worker] repricer publishes prices to Kaspi: ${publishPrices ? 'yes
 
 await repricerQueue.upsertJobScheduler('tick', { every: TICK_MS }, { name: 'tick', data: {} });
 
-// Заказы для аналитики обновляются сами раз в 30 минут
+// Заказы обновляются сами раз в 5 минут (аналитика и сообщения покупателям)
 const ordersQueue = new Queue<OrdersSyncJob>(QUEUES.ordersSync, { connection });
 for (const shop of await prisma.shop.findMany({ select: { id: true } })) {
   await ordersQueue.upsertJobScheduler(
@@ -78,8 +82,30 @@ await preorderQueue.upsertJobScheduler(
   { name: 'preorder', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
 );
 
+// Отзывы: сообщения покупателям в чат Kaspi — каждые 2 минуты
+const reviewsQueue = new Queue(QUEUES.reviews, { connection });
+await reviewsQueue.upsertJobScheduler(
+  'reviews',
+  { every: 2 * 60_000 },
+  { name: 'reviews', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
+);
+
+async function reviewsForAllShops() {
+  const shops = await prisma.shop.findMany({ where: { reviewsEnabled: true, chatSessionEnc: { not: null } }, select: { id: true } });
+  const results = [];
+  for (const shop of shops) {
+    try {
+      results.push({ shopId: shop.id, ...(await sendReviewMessages(shop.id)) });
+    } catch (error) {
+      results.push({ shopId: shop.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
 async function preordersForAllShops() {
-  const shops = await prisma.shop.findMany({ where: { products: { some: { preorderDays: { gt: 0 } } } }, select: { id: true } });
+  // Все магазины со входом в кабинет: снимать забытый предзаказ нужно и без настроек дней
+  const shops = await prisma.shop.findMany({ where: { mcSessionEnc: { not: null } }, select: { id: true } });
   const results = [];
   for (const shop of shops) {
     try {
@@ -92,6 +118,8 @@ async function preordersForAllShops() {
 }
 
 const workers = [
+  new Worker(QUEUES.reviews, reviewsForAllShops, { connection }),
+  new Worker<OfferEditJob>(QUEUES.offerEdit, async (job) => editOffer(job.data), { connection }),
   new Worker(QUEUES.preorder, preordersForAllShops, { connection }),
   new Worker<ReportJob>(QUEUES.reports, async (job) => sendDailyReports(job.data.chatId), { connection }),
   new Worker<RepricerJob>(
@@ -121,7 +149,7 @@ for (const worker of workers) {
 
 const shutdown = async () => {
   await Promise.all(workers.map((w) => w.close()));
-  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close()]);
+  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close()]);
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

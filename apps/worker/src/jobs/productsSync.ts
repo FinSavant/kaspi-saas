@@ -42,6 +42,9 @@ export async function syncProducts(
       stock: offer.stock ?? 0,
       available: true,
       preOrder: offer.preOrder,
+      imageUrl: offer.imageUrl,
+      shopUrl: offer.shopUrl,
+      stores: JSON.parse(JSON.stringify(offer.stores)),
     };
     const where = { shopId_kaspiSku: { shopId, kaspiSku: offer.sku } };
     const existing = await prisma.product.findUnique({ where, select: { id: true } });
@@ -63,6 +66,22 @@ export async function syncProducts(
     data: { available: false, preOrder: null },
   });
   result.removedFromSale = removed.count;
+
+  // Вес нужен только для тарифа доставки заказов от 10 000 ₸ — берём из карточки у дорогих
+  // товаров без веса, введённого вручную (по запросу на товар, поэтому не у всех)
+  const heavyCandidates = await prisma.product.findMany({
+    where: { shopId, available: true, weightManual: false, weightKg: null, price: { gte: 8000 } },
+    select: { id: true, kaspiSku: true },
+  });
+  if (heavyCandidates.length > 0) {
+    await withCabinet(shop, async (client) => {
+      for (const p of heavyCandidates) {
+        const details = await client.getOfferDetails(shop.merchantId, p.kaspiSku).catch(() => null);
+        const weight = Number(details?.masterProduct?.weight ?? details?.masterProduct?.card?.weight);
+        if (weight > 0) await prisma.product.update({ where: { id: p.id }, data: { weightKg: weight } });
+      }
+    });
+  }
 
   if (storefront) {
     for (const offer of offers) {

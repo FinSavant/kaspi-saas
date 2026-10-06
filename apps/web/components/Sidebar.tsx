@@ -8,8 +8,9 @@ const GROUPS = [
     title: 'Инструменты',
     items: [
       { path: 'waybills', label: 'Накладные', icon: '🧾' },
-      { path: 'products', label: 'Демпинг-бот', icon: '🔁' },
+      { path: 'products', label: 'Робот', icon: '🤖' },
       { path: 'analytics', label: 'Аналитика', icon: '📈' },
+      { path: 'reviews', label: 'Отзывы', icon: '💬' },
     ],
   },
   {

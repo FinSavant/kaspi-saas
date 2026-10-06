@@ -4,7 +4,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Кабинет продавца Kaspi',
-  description: 'Накладные, демпинг-бот и аналитика для продавцов Kaspi.kz',
+  description: 'Накладные, робот цен и аналитика для продавцов Kaspi.kz',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

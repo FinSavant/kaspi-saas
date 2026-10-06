@@ -39,6 +39,34 @@ export async function sendReportNow(_prev: ShopFormState & { ok?: boolean }, for
   }
 }
 
+export interface ChatLoginState {
+  status?: 'SMS_SENT' | 'OK';
+  sentTo?: string;
+  chats?: number;
+  error?: string;
+}
+
+/** Вход по телефону для чата: шаг 1 — номер (Kaspi шлёт SMS), шаг 2 — код. */
+export async function chatLogin(prev: ChatLoginState, formData: FormData): Promise<ChatLoginState> {
+  const shopId = String(formData.get('shopId'));
+  try {
+    if (prev.status === 'SMS_SENT' && formData.get('code')) {
+      const result = await api<{ status: 'OK'; chats: number }>(`/shops/${shopId}/chat/code`, {
+        method: 'POST',
+        body: { code: String(formData.get('code')) },
+      });
+      revalidatePath(`/shops/${shopId}/settings`);
+      return result;
+    }
+    return await api<{ status: 'SMS_SENT'; sentTo: string }>(`/shops/${shopId}/chat/login`, {
+      method: 'POST',
+      body: { phone: String(formData.get('phone') ?? '') },
+    });
+  } catch (error) {
+    return { ...(prev.status === 'SMS_SENT' ? prev : {}), error: error instanceof Error ? error.message : 'Не удалось войти.' };
+  }
+}
+
 export interface CabinetState {
   status?: 'OK' | 'MFA_REQUIRED';
   email?: string;

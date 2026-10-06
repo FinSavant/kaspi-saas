@@ -2,6 +2,8 @@ export * from './repricer/calculatePrice';
 export * from './repricer/source';
 export * from './repricer/snapshot';
 export * from './telegramLink';
+export * from './reviews';
+export * from './pricing';
 export * from './pdf/mergeWaybills';
 export * from './waybills/selectOrders';
 export * from './analytics';

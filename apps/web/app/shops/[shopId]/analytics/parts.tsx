@@ -230,12 +230,11 @@ export function ProductTable({
               <td className={`${td} ${costs} text-rose-700`}>{minus(p.paymentFee)}</td>
               <td className={`${td} ${costs} text-rose-700`}>{minus(p.delivery)}</td>
               <td className={`${costs} px-3 py-2 text-right`}>
-                {p.productId ? (
-                  <CostForm shopId={shopId} productId={p.productId} costPrice={unitCosts[p.productId] ?? null} />
-                ) : (
-                  <span className="text-xs text-slate-400" title="Товара нет в продаже — синхронизируйте товары">
+                <CostForm shopId={shopId} productId={p.productId} sku={p.sku} costPrice={p.productId ? (unitCosts[p.productId] ?? null) : null} />
+                {!p.productId && (
+                  <div className="mt-0.5 text-[10px] text-slate-400" title="Товар снят с продажи — себестоимость сохранится по артикулу">
                     нет в каталоге
-                  </span>
+                  </div>
                 )}
               </td>
               <td className={`${td} ${result}`}>

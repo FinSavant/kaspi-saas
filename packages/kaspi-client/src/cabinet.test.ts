@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildOfferUpdate,
+  buildPreOrderRemoval,
+  buildPreOrderUpdate,
   buildPriceUpdate,
+  isRestockedOnPreOrder,
   CookieJar,
   KaspiCabinetAuthError,
   KaspiCabinetClient,
@@ -82,6 +86,41 @@ describe('buildPriceUpdate', () => {
     });
   });
 
+  it('keeps the real stock of a product put on pre-order while it is in stock', () => {
+    const inStock = structuredClone(details);
+    inStock.cityInfo[0]!.pickupPoints = [
+      { name: '4869024_PP4', available: true, stock: { value: 20, enabled: true } },
+      { name: '4869024_PP5', available: true, stock: { value: 0, enabled: true } },
+    ];
+    expect(buildPreOrderUpdate(inStock, '4869024', 2).availabilities.slice(0, 2)).toEqual([
+      { available: 'yes', storeId: '4869024_PP4', preOrder: 2, stockEnabled: true, stockCount: 20 },
+      { available: 'yes', storeId: '4869024_PP5', preOrder: 2, stockEnabled: true, stockCount: PREORDER_STOCK },
+    ]);
+  });
+
+  it('sends every warehouse as the seller set it in the table', () => {
+    const update = buildOfferUpdate(details, '4869024', [
+      { storeId: '4869024_PP4', available: true, stockCount: 12, preOrder: null },
+      { storeId: '4869024_PP1', available: false, stockCount: null, preOrder: null },
+      { storeId: '4869024_PP7', available: true, stockCount: null, preOrder: 5 },
+    ], { cityId: '750000000', value: 4800 });
+    expect(update.cityPrices).toEqual([
+      { cityId: '750000000', value: 4800 },
+      { cityId: '710000000', value: 5100 },
+    ]);
+    expect(update.availabilities).toEqual([
+      { available: 'yes', storeId: '4869024_PP4', stockEnabled: true, stockCount: 12 },
+      { available: 'no', storeId: '4869024_PP1' },
+      { available: 'yes', storeId: '4869024_PP7', preOrder: 5, stockEnabled: true, stockCount: PREORDER_STOCK },
+    ]);
+  });
+
+  it('refuses to switch off every warehouse', () => {
+    expect(() =>
+      buildOfferUpdate(details, '4869024', [{ storeId: '4869024_PP4', available: false, stockCount: 3, preOrder: null }]),
+    ).toThrow(/хотя бы один склад/);
+  });
+
   it('rejects an invalid price', () => {
     expect(() => buildPriceUpdate(details, '4869024', '750000000', 0)).toThrow(RangeError);
   });
@@ -160,7 +199,41 @@ describe('mapCabinetOffer', () => {
       stock: 5,
       available: true,
       preOrder: null,
+      stores: [{ storeId: 'm_PP4', available: true, stockCount: 5, preOrder: null }, { storeId: 'm_PP1', available: false, stockCount: 0, preOrder: null }],
+      imageUrl: null,
+      shopUrl: null,
     });
+  });
+
+  it('builds the photo and the storefront link', () => {
+    const withMedia = {
+      ...offer,
+      imagesV2: [{ small: 'https://resources.cdn-kaspi.kz/img/m/p/a/b/1.jpg?format=gallery-small' }],
+      shopLink: '/p/zayn-dlja-hidzhamy-177625139/',
+    };
+    expect(mapCabinetOffer(withMedia)).toMatchObject({
+      imageUrl: 'https://resources.cdn-kaspi.kz/img/m/p/a/b/1.jpg?format=gallery-small',
+      shopUrl: 'https://kaspi.kz/shop/p/zayn-dlja-hidzhamy-177625139/',
+    });
+  });
+
+  it('tells a restocked product on pre-order from our placeholder stock', () => {
+    const base = mapCabinetOffer(offer);
+    const ours = { ...base, preOrder: 3, stores: [{ storeId: 'm_PP4', available: true, stockCount: PREORDER_STOCK, preOrder: 3 }] };
+    const restocked = { ...base, preOrder: 3, stores: [{ storeId: 'm_PP4', available: true, stockCount: 20, preOrder: 3 }] };
+    expect(isRestockedOnPreOrder(ours)).toBe(false);
+    expect(isRestockedOnPreOrder(restocked)).toBe(true);
+    expect(isRestockedOnPreOrder({ ...restocked, preOrder: null })).toBe(false);
+  });
+
+  it('removes pre-order keeping only warehouses with real stock', () => {
+    const twoPoints = structuredClone(details);
+    twoPoints.cityInfo[0]!.pickupPoints = [
+      { name: '4869024_PP4', available: true, stock: { value: 999, enabled: true } },
+      { name: '4869024_PP5', available: true, stock: { value: 999, enabled: true } },
+    ];
+    const update = buildPreOrderRemoval(twoPoints, '4869024', new Map([['4869024_PP4', 20]]));
+    expect(update.availabilities).toEqual([{ available: 'yes', storeId: '4869024_PP4', stockEnabled: true, stockCount: 20 }]);
   });
 
   it('reads pre-order days of a product on pre-order', () => {

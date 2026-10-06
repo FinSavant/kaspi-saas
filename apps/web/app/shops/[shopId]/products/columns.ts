@@ -9,10 +9,11 @@ export const COL = {
 
 export const HEADERS: { label: string; className: string }[] = [
   { label: 'Товар', className: 'text-left text-slate-700' },
-  { label: 'Карточка', className: 'text-left text-slate-700' },
-  { label: 'Цена, ₸', className: `${COL.price} text-right text-sky-800` },
-  { label: 'Остаток', className: 'text-right text-slate-700' },
+  { label: 'Цена', className: `${COL.price} text-right text-sky-800` },
+  { label: 'Позиция', className: 'text-center text-slate-700' },
+  { label: 'Склад · наличие · остаток', className: 'text-right text-slate-700' },
   { label: 'Себестоимость', className: `${COL.cost} text-right text-rose-800` },
+  { label: 'Мин. +5%', className: `${COL.cost} text-right text-rose-800` },
   { label: 'Мин. цена', className: `${COL.bot} text-right text-amber-900` },
   { label: 'Макс. цена', className: `${COL.bot} text-right text-amber-900` },
   { label: 'Шаг', className: `${COL.bot} text-right text-amber-900` },

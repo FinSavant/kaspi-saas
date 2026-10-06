@@ -39,6 +39,24 @@ model Shop {
   // Нужны воркеру, чтобы входить заново, когда сессия истекла
   mcLoginEnc      String?
   mcPasswordEnc   String?
+  // Сессия входа в кабинет по номеру телефона — только она даёт доступ к чату с
+  // покупателями (сообщения о заказе, просьба об отзыве). Зашифрована, как mcSessionEnc
+  chatSessionEnc  String?
+  chatPhone       String?
+  // Отзывы: сообщения покупателям в чат Kaspi (приветствие и просьба об отзыве)
+  reviewsEnabled     Boolean   @default(false)
+  // С какого момента рассылка включена: старые заказы не трогаем
+  reviewsEnabledAt   DateTime?
+  reviewHoursFrom    Int       @default(8)
+  reviewHoursTo      Int       @default(23)
+  // Через сколько часов после выдачи просить отзыв
+  reviewDelayHours   Int       @default(0)
+  newOrderMessages   Boolean   @default(true)
+  reviewMessages     Boolean   @default(true)
+  // null — шаблон по умолчанию (@kaspi/core reviews)
+  newOrderTemplate   String?
+  reviewTemplate     String?
+  reviewMessagesLog  ReviewMessage[]
   productsSyncedAt DateTime?
   ordersSyncedAt   DateTime?
   // Удержания Kaspi для аналитики: НДС на комиссию Магазина и комиссия Kaspi Pay, %
@@ -94,10 +112,19 @@ model Product {
   costPrice Int?
   stock     Int      @default(0)
   available Boolean  @default(true)
-  // Настройка: на сколько дней ставить на предзаказ, когда товар закончился; null — не ставить
+  // Настройка: товар держится на предзаказе столько дней; null — не ставить
   preorderDays Int?
   // Сейчас в Kaspi: дней предзаказа (из кабинета); null — не на предзаказе
   preOrder     Int?
+  // Фото и карточка на витрине kaspi.kz — из кабинета при синхронизации товаров
+  imageUrl     String?
+  shopUrl      String?
+  // Склады из кабинета: [{ storeId, available, stockCount, preOrder }] (StoreState)
+  stores       Json?
+  // Вес, кг — для тарифа доставки заказов от 10 000 ₸. Из карточки Kaspi или вручную
+  // (weightManual — тогда синхронизация его не перезаписывает)
+  weightKg     Float?
+  weightManual Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -177,6 +204,9 @@ model Order {
   paymentMode     String?
   isKaspiDelivery Boolean   @default(false)
   express         Boolean   @default(false)
+  // Для сообщений покупателю в чат Kaspi
+  customerName        String?
+  plannedDeliveryDate DateTime?
   syncedAt       DateTime  @default(now())
   // Когда загружены позиции заказа; null — ещё не загружены
   itemsSyncedAt  DateTime?
@@ -209,6 +239,27 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+// Сообщение покупателю в чат Kaspi по заказу: одно на заказ и вид — защита от повторов
+model ReviewMessage {
+  id        String    @id @default(cuid())
+  shopId    String
+  orderCode String
+  // NEW_ORDER — приветствие после заказа, REVIEW — просьба об отзыве после выдачи
+  kind      String
+  // SENT, FAILED, NO_CHAT (у заказа нет диалога), REJECTED (Kaspi не пропустил текст)
+  status    String
+  groupId   String?
+  error     String?
+  sentAt    DateTime  @default(now())
+  // Покупатель ответил после нашего сообщения
+  repliedAt DateTime?
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, orderCode, kind])
+  @@index([shopId, sentAt])
 }
 
 // Комиссия Kaspi по категории без НДС, %. Kaspi API её не отдаёт — ставки из

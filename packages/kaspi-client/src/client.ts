@@ -31,6 +31,10 @@ export interface KaspiOrder {
   paymentMode: string | null;
   isKaspiDelivery: boolean;
   express: boolean;
+  /** Имя покупателя — для сообщений в чат. */
+  customerName: string | null;
+  /** Планируемая дата доставки покупателю. */
+  plannedDeliveryDate: Date | null;
 }
 
 /** Позиция заказа. */
@@ -174,5 +178,7 @@ function mapOrder(raw: any): KaspiOrder {
     paymentMode: a.paymentMode ?? null,
     isKaspiDelivery: a.isKaspiDelivery === true,
     express: a.kaspiDelivery?.express === true,
+    customerName: typeof a.customer?.firstName === 'string' && a.customer.firstName.trim() ? a.customer.firstName.trim() : null,
+    plannedDeliveryDate: a.plannedDeliveryDate ? new Date(Number(a.plannedDeliveryDate)) : null,
   };
 }

@@ -5,10 +5,14 @@ import {
   buildBreakdowns,
   buildSalesReport,
   concatPdfs,
+  minProfitablePrice,
+  DEFAULT_TEMPLATES,
+  TEMPLATE_PARAMS,
   redisConnectionFromUrl,
   SNAPSHOT_TTL_SEC,
   snapshotKey,
   telegramLinkCode,
+  type OfferEditJob,
   type ReportJob,
   type OffersSnapshot,
   type OrdersSyncJob,
@@ -45,6 +49,12 @@ const productsSyncEvents = new QueueEvents(QUEUES.productsSync, { connection });
 // Подсчёт продавцов идёт по одной карточке в секунду, поэтому ждём дольше печати
 const SYNC_TIMEOUT_MS = 600_000;
 const ordersSyncQueue = new Queue<OrdersSyncJob>(QUEUES.ordersSync, { connection });
+const preorderQueue = new Queue(QUEUES.preorder, { connection });
+
+/** Дни предзаказа поменялись — применяем сразу, не дожидаясь проверки раз в 5 минут. */
+async function applyPreordersNow(): Promise<void> {
+  await preorderQueue.add('preorder', {}, { jobId: `preorder-now-${Date.now()}`, removeOnComplete: 20, removeOnFail: 20 });
+}
 
 /**
  * Задачи «по кнопке» имеют постоянный jobId, чтобы повторное нажатие во время работы
@@ -109,6 +119,8 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/settings', async (reques
     cityId: shop.cityId,
     hasApiToken: !!shop.apiTokenEnc,
     hasCabinetSession: !!shop.mcSessionEnc,
+    hasChatSession: !!shop.chatSessionEnc,
+    chatPhone: shop.chatPhone ? `+7 ${shop.chatPhone.slice(0, 3)} ***-**-${shop.chatPhone.slice(-2)}` : null,
     // Свои логин и пароль магазина или общие из .env — тогда войти можно без ввода
     hasCabinetLogin: !!(shop.mcLoginEnc && shop.mcPasswordEnc) || !!(process.env.KASPI_MC_LOGIN && process.env.KASPI_MC_PASSWORD),
     productsSyncedAt: shop.productsSyncedAt,
@@ -300,7 +312,8 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/orders/sync', async (re
   return reply.code(202).send({ jobId: job.id });
 });
 
-const ORDERS_SYNC_MS = 30 * 60_000;
+// Раз в 5 минут: приветствие покупателю в чат уходит вскоре после заказа
+const ORDERS_SYNC_MS = 5 * 60_000;
 
 function encryptionKey(): string {
   const key = process.env.TOKEN_ENCRYPTION_KEY;
@@ -313,7 +326,7 @@ const trimmed = (value: unknown) => (typeof value === 'string' ? value.trim() : 
 /**
  * Подключение магазина: проверяет API-токен запросом к Kaspi, сохраняет
  * токен и (если даны) логин и пароль кабинета зашифрованными и сразу
- * запускает загрузку заказов за год и её повтор раз в 30 минут.
+ * запускает загрузку заказов за год и её повтор раз в 5 минут.
  */
 app.post<{ Body: { name?: string; merchantId?: string; apiToken?: string; mcLogin?: string; mcPassword?: string } }>(
   '/shops',
@@ -428,6 +441,61 @@ app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string
     }
   },
 );
+
+// Начатые входы по телефону для чата, ждущие код из SMS (как pendingCabinetLogins)
+const pendingChatLogins = new Map<string, { client: KaspiCabinetClient; phone: string; startedAt: number }>();
+
+/**
+ * Вход в кабинет по номеру телефона для чата с покупателями. Номер — пользователь
+ * магазина с правами на заказы (как у Okto). Kaspi присылает SMS на этот номер.
+ */
+app.post<{ Params: { shopId: string }; Body: { phone?: string } }>('/shops/:shopId/chat/login', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const phone = trimmed(request.body?.phone);
+  const client = new KaspiCabinetClient();
+  try {
+    const sentTo = await client.startPhoneLogin(phone);
+    pendingChatLogins.set(shop.id, { client, phone: phone.replace(/\D/g, '').slice(-10), startedAt: Date.now() });
+    return { status: 'SMS_SENT', sentTo };
+  } catch (error) {
+    request.log.warn({ trace: client.trace }, 'chat phone login failed');
+    return reply.code(400).send({ error: `Kaspi не отправил SMS: ${error instanceof Error ? error.message : error}` });
+  }
+});
+
+app.post<{ Params: { shopId: string }; Body: { code?: string } }>('/shops/:shopId/chat/code', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const pending = pendingChatLogins.get(shop.id);
+  if (!pending || Date.now() - pending.startedAt > PENDING_LOGIN_TTL_MS) {
+    pendingChatLogins.delete(shop.id);
+    return reply.code(400).send({ error: 'Вход устарел — запросите SMS ещё раз.' });
+  }
+  const code = trimmed(request.body?.code);
+  if (!code) return reply.code(400).send({ error: 'Введите код из SMS.' });
+  try {
+    const result = await pending.client.submitSmsCode(code, shop.merchantId);
+    if (result.status !== 'OK') return reply.code(400).send({ error: 'Kaspi запросил дополнительное подтверждение.' });
+    pendingChatLogins.delete(shop.id);
+    await prisma.shop.update({
+      where: { id: shop.id },
+      data: { chatSessionEnc: encryptSecret(pending.client.jar.toJSON(), encryptionKey()), chatPhone: pending.phone },
+    });
+    // Проверка: чат действительно открылся — читаем только число диалогов
+    const data = await pending.client.chat<{ groups?: unknown[] }>('/api/v1/group/loadGroups/chat', { limit: 5, gts: Number.MAX_SAFE_INTEGER }, shop.merchantId);
+    await prisma.shop.update({ where: { id: shop.id }, data: { chatSessionEnc: encryptSecret(pending.client.jar.toJSON(), encryptionKey()) } });
+    return { status: 'OK', chats: data?.groups?.length ?? 0 };
+  } catch (error) {
+    request.log.warn({ trace: pending.client.trace }, 'chat sms code failed');
+    const message = error instanceof Error ? error.message : String(error);
+    return reply.code(400).send({
+      error: /INVALID_AUTH_TICKET/.test(message)
+        ? 'Вход выполнен, но чат недоступен: этот номер должен быть пользователем магазина с правами на заказы.'
+        : `Не удалось войти: ${message}`,
+    });
+  }
+});
 
 /** Код из почты для начатого входа в кабинет. */
 app.post<{ Params: { shopId: string }; Body: { code?: string } }>('/shops/:shopId/cabinet/code', async (request, reply) => {
@@ -748,35 +816,108 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/products/sync', async (
 });
 
 // Только товары в продаже; снятые с продажи остаются в базе вместе с настройками бота
-app.get<{ Params: { shopId: string } }>('/shops/:shopId/products', async (request) =>
-  prisma.product.findMany({
-    // Снятые с продажи показываются, если для них настроен предзаказ: их ждёт автопредзаказ
-    where: { shopId: request.params.shopId, OR: [{ available: true }, { preorderDays: { gt: 0 } }] },
+/** Цены конкурентов за последние сутки старше этого не учитываются в месте товара. */
+const POSITION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Товары магазина. По умолчанию — в продаже (и снятые, если для них настроен
+ * предзаказ: их ждёт автопредзаказ); ?archived=1 — все снятые с продажи.
+ * К каждому товару — место по цене в карточке и цена первого места
+ * по последней проверке бота (все строки одной проверки имеют общее время).
+ */
+app.get<{ Params: { shopId: string }; Querystring: { archived?: string } }>('/shops/:shopId/products', async (request) => {
+  const { shopId } = request.params;
+  const products = await prisma.product.findMany({
+    where:
+      request.query.archived === '1'
+        ? { shopId, available: false }
+        : { shopId, OR: [{ available: true }, { preorderDays: { gt: 0 } }] },
     include: { repricerSetting: true },
     orderBy: { name: 'asc' },
-  }),
-);
+  });
+  const logs = await prisma.competitorLog.findMany({
+    where: { productId: { in: products.map((p) => p.id) }, capturedAt: { gte: new Date(Date.now() - POSITION_MAX_AGE_MS) } },
+    orderBy: { capturedAt: 'desc' },
+    select: { productId: true, price: true, capturedAt: true },
+  });
+  const latest = new Map<string, { at: number; prices: number[] }>();
+  for (const log of logs) {
+    const entry = latest.get(log.productId);
+    if (!entry) latest.set(log.productId, { at: log.capturedAt.getTime(), prices: [log.price] });
+    else if (entry.at === log.capturedAt.getTime()) entry.prices.push(log.price);
+  }
+
+  // Для «Мин. +5%»: удержания магазина и комиссия категории (у товара или по его продажам);
+  // доставка — по тарифу Kaspi от самой цены (см. minProfitablePrice)
+  const [shop, commissions, soldCategories] = await Promise.all([
+    prisma.shop.findUniqueOrThrow({ where: { id: shopId }, select: { commissionVatPercent: true, paymentFeePercent: true } }),
+    prisma.categoryCommission.findMany(),
+    prisma.orderItem.findMany({
+      where: { productId: { in: products.map((p) => p.id) }, category: { not: null } },
+      distinct: ['productId'],
+      select: { productId: true, category: true },
+    }),
+  ]);
+  const percentByCategory = new Map(commissions.map((c) => [c.category, Number(c.percent)]));
+  const soldCategory = new Map(soldCategories.map((i) => [i.productId!, i.category!]));
+  const minPrice = (p: (typeof products)[number]) => {
+    const commission = percentByCategory.get(p.category ?? '') ?? percentByCategory.get(soldCategory.get(p.id) ?? '');
+    if (p.costPrice == null || commission === undefined) return null;
+    return minProfitablePrice({
+      costPrice: p.costPrice,
+      commissionPercent: commission,
+      commissionVatPercent: Number(shop.commissionVatPercent),
+      paymentFeePercent: Number(shop.paymentFeePercent),
+      weightKg: p.weightKg,
+    });
+  };
+
+  return products.map((p) => {
+    const competitors = latest.get(p.id)?.prices;
+    const min = minPrice(p);
+    return {
+      ...p,
+      minProfitablePrice: min?.price ?? null,
+      minPriceDelivery: min?.delivery ?? null,
+      // Место: 1 + число конкурентов дешевле нас; при равной цене считаем, что мы не ниже их
+      position: competitors ? 1 + competitors.filter((price) => price < p.price).length : null,
+      topCompetitorPrice: competitors?.length ? Math.min(...competitors) : null,
+      checkedAt: latest.has(p.id) ? new Date(latest.get(p.id)!.at) : null,
+    };
+  });
+});
 
 const isNonNegativeInt = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
 
 // Себестоимость и дни автопредзаказа вводятся вручную; null очищает значение
-app.patch<{ Params: { productId: string }; Body: { costPrice?: number | null; preorderDays?: number | null } }>(
+app.patch<{ Params: { productId: string }; Body: { costPrice?: number | null; preorderDays?: number | null; weightKg?: number | null } }>(
   '/products/:productId',
   async (request, reply) => {
-    const { costPrice, preorderDays } = request.body ?? {};
-    if (costPrice === undefined && preorderDays === undefined) {
-      return reply.code(400).send({ error: 'costPrice or preorderDays is required' });
+    const { costPrice, preorderDays, weightKg } = request.body ?? {};
+    if (costPrice === undefined && preorderDays === undefined && weightKg === undefined) {
+      return reply.code(400).send({ error: 'costPrice, preorderDays or weightKg is required' });
+    }
+    if (weightKg !== undefined && weightKg !== null && !(typeof weightKg === 'number' && weightKg > 0 && weightKg <= 1000)) {
+      return reply.code(400).send({ error: 'Вес — число килограммов, например 12.' });
     }
     if (costPrice !== undefined && costPrice !== null && !isNonNegativeInt(costPrice)) {
       return reply.code(400).send({ error: 'costPrice must be a non-negative integer or null' });
     }
-    if (preorderDays !== undefined && preorderDays !== null && !(Number.isInteger(preorderDays) && preorderDays >= 1 && preorderDays <= 60)) {
-      return reply.code(400).send({ error: 'Предзаказ — от 1 до 60 дней.' });
+    if (preorderDays !== undefined && preorderDays !== null && !(Number.isInteger(preorderDays) && preorderDays >= 1 && preorderDays <= 30)) {
+      return reply.code(400).send({ error: 'Предзаказ — от 1 до 30 дней (больше Kaspi не принимает).' });
     }
-    return prisma.product.update({
+    const before = await prisma.product.findUniqueOrThrow({ where: { id: request.params.productId }, select: { preorderDays: true } });
+    const product = await prisma.product.update({
       where: { id: request.params.productId },
-      data: { ...(costPrice !== undefined && { costPrice }), ...(preorderDays !== undefined && { preorderDays }) },
+      data: {
+        ...(costPrice !== undefined && { costPrice }),
+        ...(preorderDays !== undefined && { preorderDays }),
+        // Вес, введённый вручную, синхронизация больше не перезаписывает; пусто — снова из карточки
+        ...(weightKg !== undefined && { weightKg, weightManual: weightKg !== null }),
+      },
     });
+    if (preorderDays !== undefined && preorderDays !== before.preorderDays) await applyPreordersNow();
+    return product;
   },
 );
 
@@ -838,6 +979,242 @@ app.put<{ Params: { productId: string }; Body: RepricerPatch }>(
 
     const data = { enabled: body.enabled ?? existing?.enabled ?? false, floorPrice, ceilingPrice, step, checkIntervalSec };
     return prisma.repricerSetting.upsert({ where: { productId }, create: { productId, ...data }, update: data });
+  },
+);
+
+const offerEditQueue = new Queue<OfferEditJob>(QUEUES.offerEdit, { connection });
+const offerEditEvents = new QueueEvents(QUEUES.offerEdit, { connection });
+
+/** Правка цены, остатка или наличия склада из таблицы — сразу в кабинете Kaspi (через воркер). */
+app.post<{ Params: { productId: string }; Body: { kind?: string; storeId?: string; value?: unknown } }>(
+  '/products/:productId/edit',
+  async (request, reply) => {
+    const { productId } = request.params;
+    const { kind, storeId, value } = request.body ?? {};
+    let data: OfferEditJob;
+    if (kind === 'price') {
+      if (!isPositiveInt(value)) return reply.code(400).send({ error: 'Цена — целое число больше нуля.' });
+      data = { productId, kind, value };
+    } else if (kind === 'stock' && typeof storeId === 'string') {
+      if (value !== null && !isNonNegativeInt(value)) return reply.code(400).send({ error: 'Остаток — целое число (пусто — без учёта).' });
+      data = { productId, kind, storeId, value: value as number | null };
+    } else if (kind === 'availability' && typeof storeId === 'string' && typeof value === 'boolean') {
+      data = { productId, kind, storeId, value };
+    } else {
+      return reply.code(400).send({ error: 'Неизвестная правка.' });
+    }
+    if (!(await prisma.product.findUnique({ where: { id: productId }, select: { id: true } }))) {
+      return reply.code(404).send({ error: 'product not found' });
+    }
+    const job = await offerEditQueue.add('edit', data, { removeOnComplete: { age: 600 }, removeOnFail: { age: 600 } });
+    try {
+      return await job.waitUntilFinished(offerEditEvents, 60_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'edit failed';
+      return reply.code(502).send({
+        error: /429|limit/i.test(message) ? 'Kaspi ограничил число изменений цены — попробуйте позже.' : message,
+      });
+    }
+  },
+);
+
+/**
+ * Себестоимость товара, которого нет в каталоге (снят с продажи до синхронизации):
+ * создаётся скрытая карточка с этим артикулом, к ней привязываются все продажи —
+ * так себестоимость учитывается и в прошлых, и в будущих заказах.
+ */
+app.put<{ Params: { shopId: string }; Body: { sku?: string; costPrice?: number | null } }>(
+  '/shops/:shopId/sku-cost',
+  async (request, reply) => {
+    const { shopId } = request.params;
+    const sku = trimmed(request.body?.sku);
+    const costPrice = request.body?.costPrice ?? null;
+    if (!sku) return reply.code(400).send({ error: 'sku is required' });
+    if (costPrice !== null && !isNonNegativeInt(costPrice)) return reply.code(400).send({ error: 'Себестоимость — целое число в тенге.' });
+    const sample = await prisma.orderItem.findFirst({
+      where: { kaspiSku: sku, order: { shopId } },
+      orderBy: { order: { createdAtKaspi: 'desc' } },
+      select: { name: true, unitPrice: true },
+    });
+    if (!sample) return reply.code(404).send({ error: 'Продаж этого товара нет.' });
+    const product = await prisma.product.upsert({
+      where: { shopId_kaspiSku: { shopId, kaspiSku: sku } },
+      create: { shopId, kaspiSku: sku, name: sample.name, price: sample.unitPrice, available: false, costPrice },
+      update: { costPrice },
+    });
+    await prisma.orderItem.updateMany({ where: { kaspiSku: sku, productId: null, order: { shopId } }, data: { productId: product.id } });
+    return { productId: product.id, costPrice };
+  },
+);
+
+/** Заказы для раздела «Отзывы» за 14 дней со статусом сообщений; фильтр — как фишки в Okto. */
+app.get<{ Params: { shopId: string }; Querystring: { filter?: string; q?: string } }>('/shops/:shopId/reviews', async (request) => {
+  const { shopId } = request.params;
+  const since = new Date(Date.now() - 14 * DAY_MS);
+  const [orders, messages] = await Promise.all([
+    prisma.order.findMany({
+      where: { shopId, createdAtKaspi: { gte: since }, status: { notIn: [...NOT_SOLD_STATUSES] } },
+      select: { code: true, status: true, createdAtKaspi: true, completedAt: true, plannedDeliveryDate: true, customerName: true, totalPrice: true },
+      orderBy: { createdAtKaspi: 'desc' },
+    }),
+    prisma.reviewMessage.findMany({ where: { shopId, sentAt: { gte: new Date(since.getTime() - 7 * DAY_MS) } } }),
+  ]);
+  const byOrder = new Map<string, { NEW_ORDER?: (typeof messages)[number]; REVIEW?: (typeof messages)[number] }>();
+  for (const m of messages) byOrder.set(m.orderCode, { ...byOrder.get(m.orderCode), [m.kind]: m });
+
+  const rows = orders.map((o) => {
+    const m = byOrder.get(o.code) ?? {};
+    const failed = [m.NEW_ORDER, m.REVIEW].some((x) => x && ['FAILED', 'REJECTED', 'NO_CHAT'].includes(x.status));
+    const stage = m.REVIEW?.repliedAt ? 'replied' : m.REVIEW?.status === 'SENT' ? 'requested' : failed ? 'failed' : 'new';
+    return {
+      ...o,
+      stage,
+      greeting: m.NEW_ORDER ? { status: m.NEW_ORDER.status, at: m.NEW_ORDER.sentAt, error: m.NEW_ORDER.error } : null,
+      review: m.REVIEW ? { status: m.REVIEW.status, at: m.REVIEW.sentAt, error: m.REVIEW.error, repliedAt: m.REVIEW.repliedAt } : null,
+    };
+  });
+  const counts: Record<string, number> = { all: rows.length, new: 0, requested: 0, replied: 0, failed: 0 };
+  for (const r of rows) counts[r.stage]!++;
+  const q = (request.query.q ?? '').trim().toLowerCase();
+  const filter = request.query.filter;
+  return {
+    counts,
+    rows: rows.filter(
+      (r) => (!filter || filter === 'all' || r.stage === filter) && (!q || r.code.includes(q) || (r.customerName ?? '').toLowerCase().includes(q)),
+    ),
+  };
+});
+
+/** Настройки и шаблоны рассылки отзывов; включение запоминает момент — старые заказы не трогаем. */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/reviews/settings', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  return {
+    chatConnected: !!shop.chatSessionEnc,
+    shopName: shop.name,
+    reviewsEnabled: shop.reviewsEnabled,
+    reviewHoursFrom: shop.reviewHoursFrom,
+    reviewHoursTo: shop.reviewHoursTo,
+    reviewDelayHours: shop.reviewDelayHours,
+    newOrderMessages: shop.newOrderMessages,
+    reviewMessages: shop.reviewMessages,
+    newOrderTemplate: shop.newOrderTemplate ?? DEFAULT_TEMPLATES.NEW_ORDER,
+    reviewTemplate: shop.reviewTemplate ?? DEFAULT_TEMPLATES.REVIEW,
+    defaults: DEFAULT_TEMPLATES,
+    params: TEMPLATE_PARAMS,
+  };
+});
+
+app.patch<{
+  Params: { shopId: string };
+  Body: {
+    reviewsEnabled?: boolean;
+    reviewHoursFrom?: number;
+    reviewHoursTo?: number;
+    reviewDelayHours?: number;
+    newOrderMessages?: boolean;
+    reviewMessages?: boolean;
+    newOrderTemplate?: string | null;
+    reviewTemplate?: string | null;
+  };
+}>('/shops/:shopId/reviews/settings', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const b = request.body ?? {};
+  const hour = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 24;
+  if (b.reviewHoursFrom !== undefined && !hour(b.reviewHoursFrom)) return reply.code(400).send({ error: 'Час — от 0 до 24.' });
+  if (b.reviewHoursTo !== undefined && !hour(b.reviewHoursTo)) return reply.code(400).send({ error: 'Час — от 0 до 24.' });
+  if (b.reviewDelayHours !== undefined && !(Number.isInteger(b.reviewDelayHours) && b.reviewDelayHours >= 0 && b.reviewDelayHours <= 24 * 30)) {
+    return reply.code(400).send({ error: 'Задержка — от 0 часов до 30 дней.' });
+  }
+  for (const t of [b.newOrderTemplate, b.reviewTemplate]) {
+    if (typeof t === 'string' && (t.trim().length < 5 || t.length > 3000)) return reply.code(400).send({ error: 'Текст шаблона — от 5 до 3000 символов.' });
+  }
+  if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
+  const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
+  return prisma.shop.update({
+    where: { id: shop.id },
+    data: {
+      ...(b.reviewsEnabled !== undefined && { reviewsEnabled: b.reviewsEnabled }),
+      ...(turningOn && { reviewsEnabledAt: new Date() }),
+      ...(b.reviewHoursFrom !== undefined && { reviewHoursFrom: b.reviewHoursFrom }),
+      ...(b.reviewHoursTo !== undefined && { reviewHoursTo: b.reviewHoursTo }),
+      ...(b.reviewDelayHours !== undefined && { reviewDelayHours: b.reviewDelayHours }),
+      ...(b.newOrderMessages !== undefined && { newOrderMessages: b.newOrderMessages }),
+      ...(b.reviewMessages !== undefined && { reviewMessages: b.reviewMessages }),
+      // Текст, совпадающий со стандартным, храним как null: при обновлении стандарта он обновится сам
+      ...(b.newOrderTemplate !== undefined && { newOrderTemplate: b.newOrderTemplate === DEFAULT_TEMPLATES.NEW_ORDER ? null : b.newOrderTemplate }),
+      ...(b.reviewTemplate !== undefined && { reviewTemplate: b.reviewTemplate === DEFAULT_TEMPLATES.REVIEW ? null : b.reviewTemplate }),
+    },
+    select: { reviewsEnabled: true },
+  });
+});
+
+const BULK_ACTIONS = ['enable', 'disable', 'step', 'floor', 'ceiling', 'preorder', 'cost'] as const;
+type BulkAction = (typeof BULK_ACTIONS)[number];
+
+/**
+ * Массовые действия над выбранными товарами, как в Okto. Товары, к которым действие
+ * не применимо, пропускаются и считаются: включить робота можно только с минимальной
+ * ценой, шаг и макс. цена меняются только у настроенного робота, макс. не ниже мин.
+ */
+app.post<{ Params: { shopId: string }; Body: { productIds?: unknown; action?: BulkAction; value?: number | null } }>(
+  '/shops/:shopId/products/bulk',
+  async (request, reply) => {
+    const { shopId } = request.params;
+    const { action, value = null } = request.body ?? {};
+    const ids = Array.isArray(request.body?.productIds) ? request.body.productIds.filter((id): id is string => typeof id === 'string') : [];
+    if (!action || !BULK_ACTIONS.includes(action)) return reply.code(400).send({ error: 'Неизвестное действие.' });
+    if (ids.length === 0) return reply.code(400).send({ error: 'Не выбрано ни одного товара.' });
+
+    const needsValue = ['step', 'floor', 'ceiling'].includes(action);
+    if (needsValue && !isPositiveInt(value) && !(action === 'ceiling' && value === null)) {
+      return reply.code(400).send({ error: 'Укажите целое число больше нуля.' });
+    }
+    if (action === 'preorder' && value !== null && !(Number.isInteger(value) && value >= 1 && value <= 30)) {
+      return reply.code(400).send({ error: 'Предзаказ — от 1 до 30 дней (пусто — убрать).' });
+    }
+    if (action === 'cost' && value !== null && !isNonNegativeInt(value)) {
+      return reply.code(400).send({ error: 'Себестоимость — целое число в тенге (пусто — убрать).' });
+    }
+
+    const products = await prisma.product.findMany({ where: { shopId, id: { in: ids } }, include: { repricerSetting: true } });
+    let updated = 0;
+    const skipped: string[] = [];
+    for (const p of products) {
+      const s = p.repricerSetting;
+      const setting = (data: { enabled?: boolean; step?: number; ceilingPrice?: number | null }) =>
+        prisma.repricerSetting.update({ where: { productId: p.id }, data });
+
+      if (action === 'preorder' || action === 'cost') {
+        await prisma.product.update({ where: { id: p.id }, data: action === 'preorder' ? { preorderDays: value } : { costPrice: value } });
+      } else if (action === 'floor') {
+        if (s?.ceilingPrice != null && s.ceilingPrice < value!) {
+          skipped.push(p.name);
+          continue;
+        }
+        await prisma.repricerSetting.upsert({
+          where: { productId: p.id },
+          create: { productId: p.id, floorPrice: value!, enabled: false },
+          update: { floorPrice: value! },
+        });
+      } else if (action === 'disable') {
+        if (!s?.enabled) continue;
+        await setting({ enabled: false });
+      } else if (!s || (action === 'ceiling' && value !== null && value < s.floorPrice)) {
+        // Включить, шаг и макс. цена — только у товара с минимальной ценой
+        skipped.push(p.name);
+        continue;
+      } else if (action === 'enable') {
+        if (s.enabled) continue;
+        await setting({ enabled: true });
+      } else {
+        await setting(action === 'step' ? { step: value! } : { ceilingPrice: value });
+      }
+      updated++;
+    }
+    if (action === 'preorder') await applyPreordersNow();
+    return { updated, skipped };
   },
 );
 

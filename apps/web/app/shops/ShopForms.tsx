@@ -1,7 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
-import { addShop, cabinetLogin, sendReportNow, type CabinetState, type ShopFormState } from './actions';
+import { addShop, cabinetLogin, chatLogin, sendReportNow, type CabinetState, type ChatLoginState, type ShopFormState } from './actions';
 
 const INPUT = 'w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm';
 const BUTTON = 'rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50';
@@ -32,7 +32,7 @@ export function NewShopForm() {
       </Field>
 
       <fieldset className="space-y-3 rounded-lg border border-slate-200 p-3">
-        <legend className="px-1 text-sm font-medium">Пользователь кабинета Kaspi — для товаров и демпинг-бота</legend>
+        <legend className="px-1 text-sm font-medium">Пользователь кабинета Kaspi — для товаров и робота</legend>
         <p className="text-xs text-slate-500">
           Создайте в кабинете Kaspi («Управление пользователями») отдельного пользователя с правом «Загрузка товаров». Можно
           указать позже в настройках магазина.
@@ -48,6 +48,33 @@ export function NewShopForm() {
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
       <button type="submit" disabled={pending} className={BUTTON}>
         {pending ? 'Проверяю токен…' : 'Подключить магазин'}
+      </button>
+    </form>
+  );
+}
+
+/** Вход по телефону для чата с покупателями: номер → код из SMS. */
+export function ChatLoginForm({ shopId }: { shopId: string }) {
+  const [state, action, pending] = useActionState<ChatLoginState, FormData>(chatLogin, {});
+
+  if (state.status === 'OK') {
+    return <p className="text-sm text-emerald-700">Чат подключён. Диалогов найдено: {state.chats}.</p>;
+  }
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="shopId" value={shopId} />
+      {state.status === 'SMS_SENT' ? (
+        <Field label={`Код из SMS на ${state.sentTo}`}>
+          <input name="code" required autoComplete="one-time-code" inputMode="numeric" className={INPUT} />
+        </Field>
+      ) : (
+        <Field label="Номер телефона пользователя магазина" hint="Номер должен быть добавлен в кабинете Kaspi пользователем с правами на заказы.">
+          <input name="phone" required type="tel" placeholder="+7 7__ ___ __ __" className={INPUT} />
+        </Field>
+      )}
+      {state.error && <p className="text-sm text-red-600">{state.error}</p>}
+      <button type="submit" disabled={pending} className={BUTTON}>
+        {pending ? '…' : state.status === 'SMS_SENT' ? 'Подтвердить код' : 'Получить SMS'}
       </button>
     </form>
   );
@@ -72,7 +99,7 @@ export function CabinetLoginForm({ shopId, hasSavedLogin }: { shopId: string; ha
   const [state, action, pending] = useActionState<CabinetState, FormData>(cabinetLogin, {});
 
   if (state.status === 'OK') {
-    return <p className="text-sm text-emerald-700">Вход выполнен. Товаров в продаже: {state.offers}. Теперь их можно синхронизировать в «Демпинг-боте».</p>;
+    return <p className="text-sm text-emerald-700">Вход выполнен. Товаров в продаже: {state.offers}. Теперь их можно синхронизировать в разделе «Робот».</p>;
   }
 
   return (

@@ -7,7 +7,15 @@ export const QUEUES = {
   productsSync: 'products-sync',
   reports: 'reports',
   preorder: 'preorder',
+  offerEdit: 'offer-edit',
+  reviews: 'reviews',
 } as const;
+
+/** Правка товара из таблицы «Робот»: цена или склад (остаток / наличие). */
+export type OfferEditJob =
+  | { productId: string; kind: 'price'; value: number }
+  | { productId: string; kind: 'stock'; storeId: string; value: number | null }
+  | { productId: string; kind: 'availability'; storeId: string; value: boolean };
 
 /** Ежедневный отчёт в Telegram; без chatId — всем привязанным чатам. */
 export interface ReportJob {

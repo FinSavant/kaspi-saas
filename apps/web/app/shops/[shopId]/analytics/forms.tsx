@@ -17,12 +17,24 @@ const saveIfChanged = (e: FocusEvent<HTMLInputElement>) => {
   if (e.target.value.trim() !== e.target.defaultValue) e.target.form?.requestSubmit();
 };
 
-export function CostForm({ shopId, productId, costPrice }: { shopId: string; productId: string; costPrice: number | null }) {
+/** Себестоимость товара: по карточке, а если товара нет в каталоге — по артикулу из продаж. */
+export function CostForm({
+  shopId,
+  productId,
+  sku,
+  costPrice,
+}: {
+  shopId: string;
+  productId: string | null;
+  sku: string;
+  costPrice: number | null;
+}) {
   const [state, action, pending] = useActionState<FormState, FormData>(saveCost, {});
   return (
     <form action={action} className="flex items-center justify-end gap-1">
       <input type="hidden" name="shopId" value={shopId} />
-      <input type="hidden" name="productId" value={productId} />
+      <input type="hidden" name="productId" value={productId ?? ''} />
+      <input type="hidden" name="sku" value={sku} />
       <input name="costPrice" inputMode="numeric" defaultValue={costPrice ?? ''} onBlur={saveIfChanged} placeholder="₸" aria-label="Себестоимость" className={INPUT} />
       <Status state={state} pending={pending} />
     </form>
