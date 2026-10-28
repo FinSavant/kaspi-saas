@@ -38,6 +38,11 @@ export interface ReportOrder {
   courierTransmissionDate?: Date | null;
 }
 
+export interface CustomExpense {
+  name: string;
+  percent: number;
+}
+
 export interface ReportOptions {
   from: Date;
   to: Date;
@@ -47,6 +52,10 @@ export interface ReportOptions {
   commissionVatPercent?: number;
   /** Комиссия Kaspi Pay от суммы продажи, %. */
   paymentFeePercent?: number;
+  /** Налог продавца от выручки (упрощённая декларация), %. */
+  taxPercent?: number;
+  /** Свои расходы продавца от выручки (реклама, упаковка…), каждый — название и %. */
+  customExpenses?: CustomExpense[];
   /** Какие заказы считать: выданные (по умолчанию) или ещё в работе. */
   include?: 'realized' | 'inProgress';
   timeZone?: string;
@@ -63,6 +72,11 @@ export interface ReportTotals {
   commissionVat: number;
   /** Комиссия Kaspi Pay. */
   paymentFee: number;
+  /** Налог продавца от выручки. */
+  tax: number;
+  /** Свои расходы продавца, всего и по статьям. */
+  expenses: number;
+  expenseLines: (CustomExpense & { amount: number })[];
   delivery: number;
   costOfGoods: number;
   netProfit: number;
@@ -87,6 +101,8 @@ export interface ProductRow {
   /** Комиссия Kaspi Магазина вместе с НДС. */
   commission: number;
   paymentFee: number;
+  tax: number;
+  expenses: number;
   delivery: number;
   netProfit: number | null;
   marginPercent: number | null;
@@ -128,6 +144,8 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
   const timeZone = options.timeZone ?? 'Asia/Almaty';
   const vatPercent = options.commissionVatPercent ?? 0;
   const paymentFeePercent = options.paymentFeePercent ?? 0;
+  const taxPercent = options.taxPercent ?? 0;
+  const customExpenses = (options.customExpenses ?? []).filter((e) => e.percent > 0);
   // Один форматтер на вызов: toLocaleDateString создаёт новый на каждую дату и медленный
   const dayFormat = new Intl.DateTimeFormat('sv-SE', { timeZone });
   const dayOf = (d: Date) => dayFormat.format(d);
@@ -144,6 +162,9 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
     commission: 0,
     commissionVat: 0,
     paymentFee: 0,
+    tax: 0,
+    expenses: 0,
+    expenseLines: customExpenses.map((e) => ({ ...e, amount: 0 })),
     delivery: 0,
     costOfGoods: 0,
     netProfit: 0,
@@ -177,15 +198,24 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
       // В строке товара комиссия показывается вместе с НДС
       const commission = baseCommission + commissionVat;
       const paymentFee = Math.round((item.totalPrice * paymentFeePercent) / 100);
+      const tax = Math.round((item.totalPrice * taxPercent) / 100);
+      let expenses = 0;
+      customExpenses.forEach((e, i) => {
+        const amount = Math.round((item.totalPrice * e.percent) / 100);
+        totals.expenseLines[i]!.amount += amount;
+        expenses += amount;
+      });
       const delivery = orderRevenue > 0 ? Math.round((order.deliveryCost * item.totalPrice) / orderRevenue) : 0;
       const cost = item.unitCost === null ? null : item.unitCost * item.quantity;
-      const profit = item.totalPrice - commission - paymentFee - delivery - (cost ?? 0);
+      const profit = item.totalPrice - commission - paymentFee - tax - expenses - delivery - (cost ?? 0);
 
       totals.revenue += item.totalPrice;
       totals.units += item.quantity;
       totals.commission += baseCommission;
       totals.commissionVat += commissionVat;
       totals.paymentFee += paymentFee;
+      totals.tax += tax;
+      totals.expenses += expenses;
       totals.delivery += delivery;
       totals.costOfGoods += cost ?? 0;
       if (cost !== null) revenueWithCost += item.totalPrice;
@@ -201,6 +231,8 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
         costOfGoods: 0,
         commission: 0,
         paymentFee: 0,
+        tax: 0,
+        expenses: 0,
         delivery: 0,
         netProfit: 0,
         costKnown: true,
@@ -209,6 +241,8 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
       row.revenue += item.totalPrice;
       row.commission += commission;
       row.paymentFee += paymentFee;
+      row.tax += tax;
+      row.expenses += expenses;
       row.delivery += delivery;
       if (cost === null) row.costKnown = false;
       else row.costOfGoods = (row.costOfGoods ?? 0) + cost;
@@ -218,7 +252,7 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
   }
 
   totals.netProfit =
-    totals.revenue - totals.commission - totals.commissionVat - totals.paymentFee - totals.delivery - totals.costOfGoods;
+    totals.revenue - totals.commission - totals.commissionVat - totals.paymentFee - totals.tax - totals.expenses - totals.delivery - totals.costOfGoods;
   totals.avgCheck = totals.orders > 0 ? Math.round(totals.revenue / totals.orders) : null;
   totals.marginPercent = percent(totals.netProfit, totals.revenue);
   totals.roiPercent = percent(totals.netProfit, totals.costOfGoods);
@@ -247,3 +281,18 @@ export function buildSalesReport(orders: ReportOrder[], options: ReportOptions):
     },
   };
 }
+
+export const MAX_CUSTOM_EXPENSES = 4;
+
+/** Свои расходы из настроек магазина (Json в базе); мусор и пустые строки отбрасываются. */
+export function parseCustomExpenses(value: unknown): CustomExpense[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((e): e is CustomExpense => !!e && typeof e.name === 'string' && typeof e.percent === 'number' && Number.isFinite(e.percent))
+    .map((e) => ({ name: e.name.trim().slice(0, 40), percent: e.percent }))
+    .filter((e) => e.name && e.percent > 0 && e.percent <= 100)
+    .slice(0, MAX_CUSTOM_EXPENSES);
+}
+
+/** Сумма процентов своих расходов — для минимальной выгодной цены робота. */
+export const customExpensesPercent = (expenses: CustomExpense[]) => expenses.reduce((sum, e) => sum + e.percent, 0);

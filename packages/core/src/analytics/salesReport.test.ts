@@ -45,6 +45,36 @@ describe('buildSalesReport', () => {
     });
   });
 
+  it('takes the seller tax from the sale amount, not from what is left after deductions', () => {
+    const report = buildSalesReport([order('2026-09-02T10:00:00+05:00', [item()], { deliveryCost: 900 })], {
+      ...options,
+      taxPercent: 4,
+    });
+
+    // 10 000 × 4% = 400 — от всей суммы продажи; прибыль 1 900 − 400 = 1 500
+    expect(report.totals).toMatchObject({ revenue: 10_000, tax: 400, netProfit: 1_500 });
+    expect(report.byProduct[0]).toMatchObject({ tax: 400, netProfit: 1_500 });
+  });
+
+  it('deducts the seller own expenses as percents of the sale amount', () => {
+    const report = buildSalesReport([order('2026-09-02T10:00:00+05:00', [item()], { deliveryCost: 900 })], {
+      ...options,
+      customExpenses: [
+        { name: 'Реклама', percent: 5 },
+        { name: 'Упаковка', percent: 1.5 },
+        { name: 'Пусто', percent: 0 },
+      ],
+    });
+
+    // 10 000 × 5% = 500, × 1,5% = 150; прибыль 1 900 − 650 = 1 250
+    expect(report.totals).toMatchObject({ expenses: 650, netProfit: 1_250 });
+    expect(report.totals.expenseLines).toEqual([
+      { name: 'Реклама', percent: 5, amount: 500 },
+      { name: 'Упаковка', percent: 1.5, amount: 150 },
+    ]);
+    expect(report.byProduct[0]).toMatchObject({ expenses: 650, netProfit: 1_250 });
+  });
+
   it('adds VAT on top of the Kaspi commission and deducts the Kaspi Pay fee', () => {
     const report = buildSalesReport([order('2026-09-02T10:00:00+05:00', [item()], { deliveryCost: 900 })], {
       ...options,

@@ -83,15 +83,22 @@ services:
     restart: unless-stopped
     ports:
       - '80:80'
+      - '443:443'
+      - '443:443/udp'
     environment:
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:?set in .env.server}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?set in .env.server}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Сертификаты HTTPS: без тома Caddy выпускал бы их заново при каждом перезапуске
+      - caddydata:/data
+      - caddyconfig:/config
     depends_on:
       - web
 
 volumes:
   pgdata:
+  caddydata:
+  caddyconfig:
   redisdata:
   storage:

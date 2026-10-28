@@ -5,5 +5,9 @@ node_modules
 server-access.txt
 .next
 dist
-storage
+/storage
 *.tsbuildinfo
+
+# Журнал выкладки и архивы
+deploy-sanq.log
+*.tgz

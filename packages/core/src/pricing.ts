@@ -48,6 +48,8 @@ export interface MinPriceInput {
   commissionVatPercent: number;
   /** Kaspi Pay от суммы продажи, %. */
   paymentFeePercent: number;
+  /** Налог продавца от выручки, %. */
+  taxPercent?: number;
   /** Нужная прибыль от цены, доля (0.05 — 5%). */
   margin?: number;
   /** Вес товара, кг — для тарифа заказов от 10 000 ₸; null — «до 5 кг». */
@@ -62,7 +64,7 @@ export interface MinPrice {
 
 /**
  * Цена, ниже которой прибыль меньше `margin` от цены — та же модель, что в аналитике:
- * прибыль = цена − себестоимость − комиссия − НДС на комиссию − Kaspi Pay − доставка.
+ * прибыль = цена − себестоимость − комиссия − НДС на комиссию − Kaspi Pay − налог − доставка.
  * Доставка зависит от самой цены (ступени тарифа), поэтому для каждой ступени решается
  * цена × (1 − комиссия × (1 + НДС) − Kaspi Pay − margin) = себестоимость + доставка ступени,
  * и берётся наименьшая цена, попавшая в свою ступень. Заказ — одна штука товара.
@@ -73,6 +75,7 @@ export function minProfitablePrice(input: MinPriceInput): MinPrice | null {
     1 -
     (input.commissionPercent / 100) * (1 + input.commissionVatPercent / 100) -
     input.paymentFeePercent / 100 -
+    (input.taxPercent ?? 0) / 100 -
     (input.margin ?? MIN_MARGIN);
   if (share <= 0) return null;
   for (const step of KASPI_DELIVERY_TARIFF_2026) {

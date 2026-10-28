@@ -9,10 +9,19 @@ async function call(method: string, body: FormData): Promise<void> {
   if (!res.ok) throw new Error(`Telegram ${method} failed with ${res.status}: ${await res.text()}`);
 }
 
-export async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+/** Кнопка под сообщением: нажатие приходит боту как callback с `data`. */
+export interface TelegramButton {
+  text: string;
+  data: string;
+}
+
+export async function sendTelegramMessage(chatId: string, text: string, buttons: TelegramButton[] = []): Promise<void> {
   const form = new FormData();
   form.set('chat_id', chatId);
   form.set('text', text);
+  if (buttons.length) {
+    form.set('reply_markup', JSON.stringify({ inline_keyboard: buttons.map((b) => [{ text: b.text, callback_data: b.data }]) }));
+  }
   await call('sendMessage', form);
 }
 

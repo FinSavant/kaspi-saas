@@ -154,3 +154,18 @@ async function mapWithLimit<T, R>(
   await Promise.all(runners);
   return results;
 }
+
+/** Склейки накладных хранятся сутки: потом удаляются и файл, и запись истории. */
+export const WAYBILL_BATCH_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function cleanupWaybillBatches(storage: FileStorage, now = new Date()): Promise<number> {
+  const old = await prisma.waybillBatch.findMany({
+    where: { createdAt: { lt: new Date(now.getTime() - WAYBILL_BATCH_TTL_MS) } },
+    select: { id: true, storagePath: true },
+  });
+  for (const batch of old) {
+    await storage.remove(batch.storagePath);
+    await prisma.waybillBatch.delete({ where: { id: batch.id } });
+  }
+  return old.length;
+}

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Shop" ADD COLUMN "taxPercent" DECIMAL(5,2) NOT NULL DEFAULT 0;

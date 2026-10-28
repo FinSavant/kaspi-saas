@@ -74,6 +74,13 @@ describe('buildPriceUpdate', () => {
     expect(() => buildPriceUpdate(soldOut, '4869024', '750000000', 4899)).toThrow(KaspiCabinetOutOfStockError);
   });
 
+  it('refuses to change the price of a product removed from sale, so it is not put back on sale', () => {
+    const removed = structuredClone(details) as any;
+    removed.available = false;
+    removed.cityInfo[0].pickupPoints = [{ name: '4869024_PP4', available: true }];
+    expect(() => buildPriceUpdate(removed, '4869024', '750000000', 864)).toThrow(KaspiCabinetOutOfStockError);
+  });
+
   it('keeps a product on pre-order when changing its price', () => {
     const soldOut = structuredClone(details);
     soldOut.cityInfo[0]!.pickupPoints = [{ name: '4869024_PP4', available: true, stock: { value: 0, enabled: true } }];

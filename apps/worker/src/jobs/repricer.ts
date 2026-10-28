@@ -1,6 +1,7 @@
 import {
   calculatePrice,
   OffersNotReadyError,
+  ownerAccess,
   type CompetitorOffer,
   type CompetitorPriceSource,
   type RepricerJob,
@@ -18,10 +19,16 @@ export async function enqueueDueProducts(queue: Queue<RepricerJob>): Promise<num
   const now = Date.now();
   const settings = await prisma.repricerSetting.findMany({
     where: { enabled: true, product: { shop: { repricerEnabled: true } } },
-    select: { productId: true, lastCheckedAt: true, checkIntervalSec: true },
+    select: {
+      productId: true,
+      lastCheckedAt: true,
+      checkIntervalSec: true,
+      product: { select: { shop: { select: { owner: { select: { isAdmin: true, subscription: true } } } } } },
+    },
   });
+  // Срок тарифа истёк — робот стоит, выбор товаров сохраняется
   const due = settings.filter(
-    (s) => !s.lastCheckedAt || s.lastCheckedAt.getTime() + s.checkIntervalSec * 1000 <= now,
+    (s) => ownerAccess(s.product.shop.owner).features.includes('robot') && ownerAccess(s.product.shop.owner).active && (!s.lastCheckedAt || s.lastCheckedAt.getTime() + s.checkIntervalSec * 1000 <= now),
   );
 
   await queue.addBulk(
@@ -52,9 +59,11 @@ export async function repriceProduct(
 ): Promise<void> {
   const setting = await prisma.repricerSetting.findUnique({
     where: { productId },
-    include: { product: { include: { shop: true } } },
+    include: { product: { include: { shop: { include: { owner: { include: { subscription: true } } } } } } },
   });
   if (!setting?.enabled || !setting.product.shop.repricerEnabled) return;
+  const access = ownerAccess(setting.product.shop.owner);
+  if (!access.active || !access.features.includes('robot')) return;
 
   const { product } = setting;
   if (!product.kaspiMasterSku) {

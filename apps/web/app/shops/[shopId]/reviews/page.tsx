@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { HelpTip } from '@/components/HelpTip';
+import { TIPS } from '@/lib/tips';
 import { SearchBox } from '@/components/SearchBox';
 import { api } from '@/lib/api';
 import { MailingToggle, SettingsButton, TemplatesButton, type ReviewSettings } from './Controls';
@@ -73,22 +75,38 @@ export default async function ReviewsPage({
   const { shopId } = await params;
   const { filter = 'all', q = '' } = await searchParams;
   const query = new URLSearchParams({ filter, ...(q && { q }) });
-  const [settings, list] = await Promise.all([
+  const [settings, list, billing] = await Promise.all([
     api<ReviewSettings>(`/shops/${shopId}/reviews/settings`),
     api<{ counts: Record<string, number>; rows: ReviewRow[] }>(`/shops/${shopId}/reviews?${query}`),
+    api<{ reviewsAllowed: boolean; reviewsAddonPrice: number }>(`/shops/${shopId}/billing`),
   ]);
   const href = (f: string) => `/shops/${shopId}/reviews?filter=${f}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">💬 Отзывы</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold tracking-tight">💬 Отзывы</h1>
+          <HelpTip {...TIPS.reviews} />
+        </div>
         <div className="flex items-center gap-2">
           <MailingToggle shopId={shopId} settings={settings} />
           <SettingsButton shopId={shopId} settings={settings} />
           <TemplatesButton shopId={shopId} settings={settings} />
         </div>
       </div>
+
+      {!billing.reviewsAllowed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>
+            Отзывы не входят в тариф «Старт»: рассылка не работает. Подключите их за {billing.reviewsAddonPrice.toLocaleString('ru-RU')} ₸ в
+            месяц или перейдите на «Pro».
+          </span>
+          <Link href={`/shops/${shopId}/billing`} className="rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700">
+            Подключить отзывы
+          </Link>
+        </div>
+      )}
 
       {!settings.chatConnected && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

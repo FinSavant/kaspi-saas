@@ -1,7 +1,7 @@
 'use client';
 
 import { useActionState, type FocusEvent } from 'react';
-import { saveCommission, saveCost, saveFees, syncOrders, type FormState } from './actions';
+import { saveCommission, saveCost, saveExpenses, saveFees, syncOrders, type FormState } from './actions';
 
 const INPUT = 'w-24 rounded border border-slate-300 px-2 py-1 text-right tabular-nums';
 
@@ -69,10 +69,12 @@ export function FeesForm({
   shopId,
   commissionVatPercent,
   paymentFeePercent,
+  taxPercent,
 }: {
   shopId: string;
   commissionVatPercent: number;
   paymentFeePercent: number;
+  taxPercent: number;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(saveFees, {});
   const field = 'w-20 rounded border border-slate-300 px-2 py-1 text-right tabular-nums';
@@ -87,7 +89,51 @@ export function FeesForm({
         Kaspi Pay от суммы продажи
         <input name="paymentFeePercent" inputMode="decimal" defaultValue={paymentFeePercent} onBlur={saveIfChanged} className={field} />%
       </label>
+      <label className="flex items-center gap-2" title="Ваш налог от выручки, например 4% по упрощённой декларации. 0 — не учитывать.">
+        Налог от выручки
+        <input name="taxPercent" inputMode="decimal" defaultValue={taxPercent} onBlur={saveIfChanged} className={field} />%
+      </label>
       <Status state={state} pending={pending} />
+    </form>
+  );
+}
+
+const MAX_EXPENSES = 4;
+
+/** Свои расходы продавца: до 4 строк «название + % от выручки». Сохраняются кнопкой. */
+export function ExpensesForm({ shopId, expenses }: { shopId: string; expenses: { name: string; percent: number }[] }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(saveExpenses, {});
+  const rows = [...expenses, ...Array.from({ length: MAX_EXPENSES - expenses.length }, () => ({ name: '', percent: 0 }))].slice(0, MAX_EXPENSES);
+  return (
+    <form action={action} className="space-y-2 text-sm">
+      <input type="hidden" name="shopId" value={shopId} />
+      {rows.map((e, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <input
+            name="expenseName"
+            defaultValue={e.name}
+            placeholder={['Реклама', 'Упаковка', 'Зарплата', 'Прочее'][i]}
+            maxLength={40}
+            aria-label={`Расход ${i + 1}: название`}
+            className="w-48 rounded border border-slate-300 px-2 py-1"
+          />
+          <input
+            name="expensePercent"
+            inputMode="decimal"
+            defaultValue={e.percent || ''}
+            placeholder="0"
+            aria-label={`Расход ${i + 1}: процент от выручки`}
+            className="w-20 rounded border border-slate-300 px-2 py-1 text-right tabular-nums"
+          />
+          <span className="text-slate-500">% от выручки</span>
+        </div>
+      ))}
+      <div className="flex items-center gap-3 pt-1">
+        <button type="submit" disabled={pending} className="rounded-lg bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+          Сохранить расходы
+        </button>
+        <Status state={state} pending={pending} />
+      </div>
     </form>
   );
 }

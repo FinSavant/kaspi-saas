@@ -1,9 +1,12 @@
 import type { Breakdowns, ProductRow, ReportTotals, SalesReport } from '@kaspi/core/analytics';
+import { HelpTip } from '@/components/HelpTip';
+import { TIPS } from '@/lib/tips';
 import Link from 'next/link';
 import { ProfitStructureChart } from '@/components/ProfitStructureChart';
+import { ShopTabs } from '@/components/ShopTabs';
 import { SimpleLineChart } from '@/components/SimpleLineChart';
 import { api } from '@/lib/api';
-import { CommissionForm, FeesForm, SyncOrdersButton } from './forms';
+import { CommissionForm, ExpensesForm, FeesForm, SyncOrdersButton } from './forms';
 import {
   arrangeProducts,
   Card,
@@ -40,7 +43,8 @@ interface AnalyticsResponse {
     stages: { stage: string; orders: number; revenue: number }[];
   };
   unitCosts: Record<string, number | null>;
-  fees: { commissionVatPercent: number; paymentFeePercent: number };
+  fees: { commissionVatPercent: number; paymentFeePercent: number; taxPercent: number };
+  customExpenses: { name: string; percent: number }[];
   commissions: { category: string; title: string | null; percent: number | null }[];
 }
 
@@ -83,7 +87,10 @@ export default async function AnalyticsPage({
   const tab = TABS.some((t) => t.key === search.tab) ? search.tab! : 'overview';
   const custom = search.from && search.to;
   const query = new URLSearchParams(custom ? { from: search.from!, to: search.to! } : { period: search.period ?? '30' });
-  const data = await api<AnalyticsResponse>(`/shops/${shopId}/analytics?${query}`);
+  const [data, shops] = await Promise.all([
+    api<AnalyticsResponse>(`/shops/${shopId}/analytics?${query}`),
+    api<{ id: string; name: string }[]>('/shops'),
+  ]);
   const { totals, byProduct, byDay, missing } = data.current;
   const prev = data.previous;
   const b = data.breakdowns;
@@ -98,7 +105,19 @@ export default async function AnalyticsPage({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
+            <HelpTip {...TIPS.analytics} />
+          </div>
+          {/* Период, вкладка, сортировка и фильтр сохраняются при переключении */}
+          <ShopTabs
+            shops={shops}
+            shopId={shopId}
+            section="analytics"
+            query={`${periodQuery}&tab=${tab}&sort=${sort}${only ? `&only=${only}` : ''}`}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <SyncOrdersButton shopId={shopId} syncing={data.syncing} />
           <nav className="flex flex-wrap rounded-lg border border-slate-200 bg-white p-1 text-sm">
@@ -112,7 +131,7 @@ export default async function AnalyticsPage({
               </Link>
             ))}
           </nav>
-          <form action={base} className="flex items-center gap-1 text-sm">
+          <form action={base} className="flex flex-wrap items-center gap-1 text-sm">
             <input type="hidden" name="tab" value={tab} />
             <input type="date" name="from" defaultValue={almatyDate(data.from)} className="rounded border border-slate-300 bg-white px-2 py-1" aria-label="С" />
             <span className="text-slate-400">—</span>
@@ -311,6 +330,8 @@ export default async function AnalyticsPage({
                 { label: 'Комиссия', value: -totals.commission, kind: 'expense' },
                 { label: 'НДС комиссии', value: -totals.commissionVat, kind: 'expense' },
                 { label: 'Kaspi Pay', value: -totals.paymentFee, kind: 'expense' },
+                ...(totals.tax ? [{ label: 'Налог', value: -totals.tax, kind: 'expense' as const }] : []),
+                ...(totals.expenses ? [{ label: 'Свои расходы', value: -totals.expenses, kind: 'expense' as const }] : []),
                 { label: 'Доставка', value: -totals.delivery, kind: 'expense' },
                 { label: 'Прибыль', value: totals.netProfit, kind: 'profit' },
               ]}
@@ -318,12 +339,15 @@ export default async function AnalyticsPage({
           </Card>
           <Card
             title="Детализация расходов"
-            footer="Комиссия — по категории товара, НДС — сверху на комиссию, Kaspi Pay — от суммы продажи, доставка — фактическая сумма, удержанная Kaspi по каждому заказу."
+            footer="Комиссия — по категории товара, НДС — сверху на комиссию, Kaspi Pay и налог — от суммы продажи, доставка — фактическая сумма, удержанная Kaspi по каждому заказу."
           >
             <ExpenseTable totals={totals} previous={prev} fees={data.fees} />
           </Card>
           <Card title="Удержания Kaspi">
-            <FeesForm shopId={shopId} commissionVatPercent={data.fees.commissionVatPercent} paymentFeePercent={data.fees.paymentFeePercent} />
+            <FeesForm shopId={shopId} commissionVatPercent={data.fees.commissionVatPercent} paymentFeePercent={data.fees.paymentFeePercent} taxPercent={data.fees.taxPercent} />
+          </Card>
+          <Card title="Свои расходы" footer="Реклама, упаковка, зарплата и другие расходы в процентах от выручки. Вычитаются из прибыли и учитываются в минимальной цене робота.">
+            <ExpensesForm shopId={shopId} expenses={data.customExpenses} />
           </Card>
           <Card
             title="Комиссия Kaspi по категориям, без НДС"

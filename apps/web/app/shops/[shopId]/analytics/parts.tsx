@@ -35,7 +35,7 @@ export function Card({ title, children, footer }: { title: string; children: Rea
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <h2 className="px-4 pt-4 pb-3 font-semibold">{title}</h2>
-      <div className="px-4 pb-4">{children}</div>
+      <div className="overflow-x-auto px-4 pb-4">{children}</div>
       {footer && <div className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500">{footer}</div>}
     </section>
   );
@@ -105,7 +105,7 @@ export function ExpenseTable({
 }: {
   totals: ReportTotals;
   previous?: ReportTotals;
-  fees: { commissionVatPercent: number; paymentFeePercent: number };
+  fees: { commissionVatPercent: number; paymentFeePercent: number; taxPercent: number };
   revenueLabel?: string;
   profitLabel?: string;
 }) {
@@ -116,6 +116,12 @@ export function ExpenseTable({
     { label: 'Комиссия Kaspi (по категории)', value: totals.commission, before: previous?.commission },
     { label: `НДС на комиссию (${pct(fees.commissionVatPercent)})`, value: totals.commissionVat, before: previous?.commissionVat },
     { label: `Kaspi Pay (${pct(fees.paymentFeePercent)})`, value: totals.paymentFee, before: previous?.paymentFee },
+    { label: `Налог (${pct(fees.taxPercent)})`, value: totals.tax, before: previous?.tax },
+    ...totals.expenseLines.map((e) => ({
+      label: `${e.name} (${pct(e.percent)})`,
+      value: e.amount,
+      before: previous?.expenseLines.find((p) => p.name === e.name)?.amount,
+    })),
     { label: 'Доставка (для продавца)', value: totals.delivery, before: previous?.delivery },
   ];
   const profitColor = totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700';

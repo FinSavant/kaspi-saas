@@ -11,14 +11,34 @@ datasource db {
 
 model User {
   id             String   @id @default(cuid())
-  phone          String   @unique
+  // Вход по email и паролю; phone — старый служебный идентификатор (local-owner)
+  email          String?  @unique
+  phone          String?  @unique
   passwordHash   String
   name           String?
   telegramChatId String?  @unique
+  // Владелец платформы: без ограничений тарифа, видит админку и скрытые разделы
+  isAdmin        Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  shops Shop[]
+  shops        Shop[]
+  subscription Subscription?
+  sessions     Session[]
+  wbAccount WbAccount?
+}
+
+// Сессия входа в веб-кабинет. В куке браузера — сам токен, здесь — только его SHA-256
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Shop {
@@ -62,36 +82,41 @@ model Shop {
   // Удержания Kaspi для аналитики: НДС на комиссию Магазина и комиссия Kaspi Pay, %
   commissionVatPercent Decimal @default(16) @db.Decimal(5, 2)
   paymentFeePercent    Decimal @default(0.95) @db.Decimal(5, 2)
+  // Налог продавца от выручки (упрощённая декларация), %; 0 — не учитывать
+  taxPercent           Decimal @default(0) @db.Decimal(5, 2)
+  // Свои расходы продавца от выручки для аналитики: [{ name, percent }], до 4 строк
+  customExpenses       Json    @default("[]")
+  // Варианты наценки для «Мин. цены» на вкладке робота: прибыль 5% и 10% от цены и т. п.
+  markupPercents       Int[]   @default([5, 10])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  subscription    Subscription?
   products        Product[]
   orders          Order[]
   waybillBatches  WaybillBatch[]
   printedWaybills PrintedWaybill[]
 
+  pickingMarks    PickingMark[]
   @@index([ownerId])
 }
 
-enum SubscriptionStatus {
-  TRIAL
-  ACTIVE
-  EXPIRED
-}
-
+// Подписка продавца SANQ (одна на аккаунт, охватывает все его магазины).
+// Статус считается по датам (@kaspi/core subscriptionState): оплачено до paidUntil
+// или идёт пробный период до trialEndsAt; иначе доступ закрыт, данные остаются.
 model Subscription {
-  id          String             @id @default(cuid())
-  shopId      String             @unique
-  status      SubscriptionStatus @default(TRIAL)
-  plan        String             @default("yearly")
-  trialEndsAt DateTime?
-  paidUntil   DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  // start | pro | business (@kaspi/core PLANS)
+  plan         String    @default("start")
+  // Доплата за отзывы к тарифу «Старт»
+  reviewsAddon Boolean   @default(false)
+  trialEndsAt  DateTime?
+  paidUntil    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Product {
@@ -296,13 +321,117 @@ model PrintedWaybill {
   id        String   @id @default(cuid())
   shopId    String
   orderCode String
-  batchId   String
+  // Склейки хранятся сутки; отметка «напечатано» остаётся и после удаления склейки
+  batchId   String?
   printedAt DateTime @default(now())
 
-  shop  Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  batch WaybillBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  shop  Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  batch WaybillBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   // Защита от повторной печати
   @@unique([shopId, orderCode])
 }
 
+
+// Отметки экрана «Сборка»: позиция заказа собрана / упакована (по заказу и артикулу)
+model PickingMark {
+  id        String   @id @default(cuid())
+  shopId    String
+  orderCode String
+  sku       String
+  collected Boolean  @default(false)
+  packed    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, orderCode, sku])
+}
+
+// Кабинет продавца Wildberries: токен API (категория «Статистика», только чтение)
+model WbAccount {
+  id         String    @id @default(cuid())
+  ownerId    String    @unique
+  // Токен, зашифрованный как apiTokenEnc у магазинов Kaspi
+  tokenEnc   String
+  // Налог продавца от выручки, %
+  taxPercent Decimal   @default(0) @db.Decimal(5, 2)
+  syncedAt   DateTime?
+  syncError  String?
+  createdAt  DateTime  @default(now())
+
+  owner    User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  rows     WbReportRow[]
+  products WbProduct[]
+  reports  WbReport[]
+}
+
+// Еженедельный отчёт о реализации WB: загружен файлом из кабинета или пришёл через API.
+// Строки отчёта — WbReportRow с тем же realizationreportId; файл заменяет строки из API
+model WbReport {
+  id         String    @id @default(cuid())
+  accountId  String
+  reportId   BigInt
+  dateFrom   DateTime?
+  dateTo     DateTime?
+  // file | api
+  source     String
+  fileName   String?
+  rowsCount  Int       @default(0)
+  uploadedAt DateTime  @default(now())
+
+  account WbAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, reportId])
+}
+
+// Строка «Отчёта о реализации» WB (reportDetailByPeriod); суммы — в валюте отчёта
+model WbReportRow {
+  id          String   @id @default(cuid())
+  accountId   String
+  rrdId       BigInt
+  realizationreportId BigInt?
+  nmId        BigInt?
+  saName      String?
+  brand       String?
+  subject     String?
+  title       String?
+  docType     String?
+  operName    String?
+  quantity    Int      @default(0)
+  retailAmount Float   @default(0)
+  forPay      Float    @default(0)
+  delivery    Float    @default(0)
+  storage     Float    @default(0)
+  penalty     Float    @default(0)
+  acceptance  Float    @default(0)
+  deduction   Float    @default(0)
+  additionalPayment Float @default(0)
+  currency    String?
+  saleDate    DateTime?
+  rrDate      DateTime?
+
+  // Склад и способ продажи (FBS / FBW) — для разбивки логистики
+  warehouse   String?
+  saleMethod  String?
+
+  account WbAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, rrdId])
+  @@index([accountId, realizationreportId])
+  @@index([accountId, saleDate])
+}
+
+// Товар WB: себестоимость вводится вручную
+model WbProduct {
+  id        String  @id @default(cuid())
+  accountId String
+  nmId      BigInt
+  saName    String?
+  title     String?
+  costPrice Float?
+
+  account WbAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, nmId])
+}

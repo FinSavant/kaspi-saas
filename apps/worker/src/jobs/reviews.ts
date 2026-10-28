@@ -4,6 +4,7 @@ import {
   NOT_SOLD_STATUSES,
   decryptSecret,
   encryptSecret,
+  ownerAccess,
   renderTemplate,
   withinHours,
   type ReviewMessageKind,
@@ -18,6 +19,12 @@ const MAX_SENDS_PER_RUN = 30;
 const SEND_PAUSE_MS = 1500;
 /** Сколько страниц диалогов (по 25) просматривать в поисках диалога заказа. */
 const MAX_GROUP_PAGES = 10;
+/**
+ * Запросы к чату вход не продлевают: Kaspi закрывал его за ночь. Повторный проход
+ * через сервис входа, пока вход жив, выдаёт новую сессию без SMS — делаем его так часто.
+ */
+const SESSION_REFRESH_MS = 30 * 60 * 1000;
+const refreshedAt = new Map<string, number>();
 
 export interface ReviewsResult {
   sent: number;
@@ -57,22 +64,33 @@ async function dropDeadSession(shopId: string) {
   const shop = await prisma.shop.update({
     where: { id: shopId },
     data: { chatSessionEnc: null },
-    select: { name: true, owner: { select: { telegramChatId: true } } },
+    select: { name: true, chatPhone: true, owner: { select: { telegramChatId: true } } },
   });
   const chatId = shop.owner.telegramChatId;
   if (!chatId || !process.env.TELEGRAM_BOT_TOKEN) return;
+  const stopped = `⚠️ ${shop.name}: Kaspi закрыл вход в чат — рассылка «Отзывов» остановлена.`;
+  // С известным номером вход повторяется прямо из Telegram: кнопка → SMS → код боту
   await sendTelegramMessage(
     chatId,
-    `⚠️ ${shop.name}: Kaspi закрыл вход в чат — рассылка «Отзывов» остановлена.\nЗайдите в «Настройки» → «Чат с покупателями» и войдите по номеру ещё раз (код из SMS).`,
+    shop.chatPhone
+      ? `${stopped}\nНажмите «Войти в чат»: Kaspi пришлёт SMS, код отправьте сюда.`
+      : `${stopped}\nЗайдите в «Настройки» → «Чат с покупателями» и войдите по номеру ещё раз (код из SMS).`,
+    shop.chatPhone ? [{ text: `🔑 Войти в чат — ${shop.name}`, data: `chat:${shopId}` }] : [],
   ).catch(() => undefined);
 }
 
 async function sendWithSession(shopId: string, now: Date): Promise<ReviewsResult> {
-  const shop = await prisma.shop.findUniqueOrThrow({ where: { id: shopId } });
+  const shop = await prisma.shop.findUniqueOrThrow({ where: { id: shopId }, include: { owner: { include: { subscription: true } } } });
   const result: ReviewsResult = { sent: 0, failed: 0, noChat: 0, replies: 0 };
   if (!shop.reviewsEnabled || !shop.chatSessionEnc || !shop.reviewsEnabledAt) return { ...result, skipped: 'выключено' };
+  // Тариф истёк или отзывы не входят в тариф — рассылка стоит, настройки сохраняются
+  if (!ownerAccess(shop.owner).reviewsAllowed) return { ...result, skipped: 'не входит в тариф' };
 
   const client = new KaspiCabinetClient(CookieJar.fromJSON(decryptSecret(shop.chatSessionEnc, encryptionKey())));
+  if (now.getTime() - (refreshedAt.get(shopId) ?? 0) > SESSION_REFRESH_MS && (await client.refreshSession())) {
+    refreshedAt.set(shopId, now.getTime());
+    await saveSession(shopId, client);
+  }
   const enabledAt = shop.reviewsEnabledAt;
   const done = new Set(
     (await prisma.reviewMessage.findMany({ where: { shopId, sentAt: { gte: new Date(now.getTime() - 14 * DAY_MS) } }, select: { orderCode: true, kind: true } }))

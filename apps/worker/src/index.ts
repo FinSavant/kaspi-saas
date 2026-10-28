@@ -21,7 +21,9 @@ import { sendReviewMessages } from './jobs/reviews';
 import { syncOrders } from './jobs/ordersSync';
 import { syncProducts } from './jobs/productsSync';
 import { enqueueDueProducts, repriceProduct } from './jobs/repricer';
-import { printWaybills } from './jobs/waybills';
+import { cleanupWaybillBatches, printWaybills } from './jobs/waybills';
+import { syncWb } from './jobs/wbSync';
+import { checkReaderAlive } from './readerStatus';
 
 const connection = redisConnectionFromUrl(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const TICK_MS = 60_000;
@@ -65,6 +67,14 @@ for (const shop of await prisma.shop.findMany({ select: { id: true } })) {
     { name: 'sync', data: { shopId: shop.id }, opts: { removeOnComplete: 20, removeOnFail: 20 } },
   );
 }
+
+// Склейки накладных старше суток удаляются — проверка раз в час и при запуске
+const cleanupWaybills = () =>
+  cleanupWaybillBatches(storage)
+    .then((n) => n && console.log(`[waybills] removed ${n} batches older than 24h`))
+    .catch((error) => console.error('[waybills] cleanup failed', error));
+void cleanupWaybills();
+setInterval(cleanupWaybills, 60 * 60_000);
 
 // Ежедневный отчёт в Telegram в 09:10 по Алматы
 const reportsQueue = new Queue<ReportJob>(QUEUES.reports, { connection });
@@ -117,7 +127,28 @@ async function preordersForAllShops() {
   return results;
 }
 
+// Wildberries: отчёт о реализации раз в 3 часа (WB обновляет его не чаще)
+const wbQueue = new Queue(QUEUES.wbSync, { connection });
+await wbQueue.upsertJobScheduler('wb-sync', { every: 3 * 60 * 60_000 }, { name: 'wb-sync', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } });
+
+async function wbForAllAccounts(job: { data: { accountId?: string } }) {
+  const accounts = await prisma.wbAccount.findMany({
+    // Без токена — только загрузка файлами
+    where: { tokenEnc: { not: '' }, ...(job.data.accountId && { id: job.data.accountId }) },
+    select: { id: true },
+  });
+  const results = [];
+  for (const account of accounts) results.push({ accountId: account.id, ...(await syncWb(account.id)) });
+  return results;
+}
+
+// Читатель цен на компьютере: если замолчал — предупредить в Telegram
+const readerTimer = setInterval(() => {
+  checkReaderAlive().catch((error) => console.warn('[reader-alive]', error instanceof Error ? error.message : error));
+}, 5 * 60_000);
+
 const workers = [
+  new Worker(QUEUES.wbSync, wbForAllAccounts, { connection, concurrency: 1 }),
   new Worker(QUEUES.reviews, reviewsForAllShops, { connection }),
   new Worker<OfferEditJob>(QUEUES.offerEdit, async (job) => editOffer(job.data), { connection }),
   new Worker(QUEUES.preorder, preordersForAllShops, { connection }),
@@ -148,8 +179,9 @@ for (const worker of workers) {
 }
 
 const shutdown = async () => {
+  clearInterval(readerTimer);
   await Promise.all(workers.map((w) => w.close()));
-  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close()]);
+  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close(), wbQueue.close()]);
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

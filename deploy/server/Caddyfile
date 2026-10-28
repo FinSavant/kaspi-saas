@@ -1,10 +1,24 @@
-# Кабинет закрыт паролем: входа пользователей в приложении пока нет.
-# Когда появится домен, замените «:80» на него — Caddy сам получит HTTPS-сертификат.
+# SANQ по домену: Caddy сам получает и продлевает HTTPS-сертификат.
+# Кабинет закрыт входом продавцов (email/Telegram), api — ключом x-api-key.
+sanq.kz {
+	handle_path /api/* {
+		reverse_proxy api:4000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+www.sanq.kz {
+	redir https://sanq.kz{uri} permanent
+}
+
+# Старый вход по IP с общим паролем — пока читатель цен на компьютере продавца
+# не переведён на https://sanq.kz. Потом этот блок можно убрать.
 :80 {
 	basic_auth {
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
-	# Читатель цен с компьютера продавца обращается к api напрямую (api ещё проверяет x-api-key)
 	handle_path /api/* {
 		reverse_proxy api:4000
 	}

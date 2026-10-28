@@ -1,8 +1,27 @@
+import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { Landing } from '@/components/Landing';
 import { api } from '@/lib/api';
+import { SESSION_COOKIE } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'SANQ — робот цен, аналитика и накладные для продавцов Kaspi',
+  description:
+    'Сервис для продавцов Kaspi.kz: робот цен держит товар на первом месте, точная прибыль с учётом всех комиссий, накладные в один клик, предзаказ, отзывы и отчёт в Telegram. 3 дня бесплатно.',
+  alternates: { canonical: 'https://sanq.kz' },
+  openGraph: {
+    title: 'SANQ — сервис для продавцов Kaspi',
+    description: 'Робот цен, аналитика прибыли, накладные, предзаказ и отзывы. 3 дня бесплатно.',
+    url: 'https://sanq.kz',
+    siteName: 'SANQ',
+    locale: 'ru_KZ',
+    type: 'website',
+  },
+};
 
 interface Shop {
   id: string;
@@ -11,15 +30,20 @@ interface Shop {
 }
 
 const SECTIONS = [
-  { path: 'products', title: '🤖 Робот', text: 'Товары в продаже, минимальные цены, выбор карточек для бота.' },
+  { path: 'home', title: '🏠 Главная', text: 'Главное за неделю: выручка, прибыль, заказы и робот цен.' },
+  { path: 'robot', title: '🤖 Робот цен', text: 'Минимальные цены и выбор товаров для робота.' },
   { path: 'waybills', title: 'Накладные', text: 'Склейка накладных из «Передачи» для термопринтера или A4.' },
   { path: 'analytics', title: 'Аналитика', text: 'Выручка, прибыль, маржа и ROI за неделю, месяц и 3 месяца.' },
 ];
 
 export default async function HomePage() {
+  // Гость (в том числе из поиска) видит страницу о сервисе, продавец — свой кабинет
+  if (!(await cookies()).get(SESSION_COOKIE)?.value) return <Landing />;
   const shops = await api<Shop[]>('/shops');
   // С одним магазином список не нужен — сразу в кабинет
-  if (shops.length === 1) redirect(`/shops/${shops[0]!.id}/analytics`);
+  // Новый продавец — сразу к подключению первого магазина
+  if (shops.length === 0) redirect('/shops/new');
+  if (shops.length === 1) redirect(`/shops/${shops[0]!.id}/home`);
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-4 py-8">

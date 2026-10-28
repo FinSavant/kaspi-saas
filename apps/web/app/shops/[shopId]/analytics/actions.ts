@@ -53,14 +53,37 @@ export async function saveFees(_prev: FormState, formData: FormData): Promise<Fo
     const pattern = /^\d{1,3}(\.\d{1,2})?$/;
     const commissionVatPercent = parseOptionalNumber(formData.get('commissionVatPercent'), pattern, 'НДС — число, например 16.');
     const paymentFeePercent = parseOptionalNumber(formData.get('paymentFeePercent'), pattern, 'Kaspi Pay — число, например 0.95.');
+    const taxPercent = parseOptionalNumber(formData.get('taxPercent'), pattern, 'Налог — число, например 4.');
     await api(`/shops/${shopId}/fees`, {
       method: 'PATCH',
-      body: { commissionVatPercent: commissionVatPercent ?? 0, paymentFeePercent: paymentFeePercent ?? 0 },
+      body: { commissionVatPercent: commissionVatPercent ?? 0, paymentFeePercent: paymentFeePercent ?? 0, taxPercent: taxPercent ?? 0 },
     });
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось сохранить.' };
   }
   revalidatePath(`/shops/${shopId}/analytics`);
+  return { ok: true };
+}
+
+/** Свои расходы: строки «название + %»; пустые строки отбрасываются. */
+export async function saveExpenses(_prev: FormState, formData: FormData): Promise<FormState> {
+  const shopId = String(formData.get('shopId'));
+  const names = formData.getAll('expenseName').map(String);
+  const percents = formData.getAll('expensePercent').map(String);
+  try {
+    const expenses = names.flatMap((rawName, i) => {
+      const name = rawName.trim();
+      const raw = (percents[i] ?? '').replace(',', '.').trim();
+      if (!name && !raw) return [];
+      if (!name) throw new Error('Укажите название расхода.');
+      if (!/^\d{1,3}(\.\d{1,2})?$/.test(raw) || Number(raw) > 100) throw new Error(`${name}: процент — число, например 3 или 1.5.`);
+      return [{ name, percent: Number(raw) }];
+    });
+    await api(`/shops/${shopId}/expenses`, { method: 'PUT', body: { expenses } });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Не удалось сохранить.' };
+  }
+  revalidatePath(`/shops/${shopId}`, 'layout');
   return { ok: true };
 }
 

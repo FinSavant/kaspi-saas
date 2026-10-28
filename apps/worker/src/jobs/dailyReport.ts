@@ -1,5 +1,6 @@
-import { buildSalesReport, NOT_SOLD_STATUSES, type ReportOrder } from '@kaspi/core';
+import { buildSalesReport, NOT_SOLD_STATUSES, parseCustomExpenses, readerWarning, type ReportOrder } from '@kaspi/core';
 import { prisma } from '@kaspi/db';
+import { readerLastSeen } from '../readerStatus';
 import { sendTelegramMessage } from '../telegram';
 import { syncOrders } from './ordersSync';
 import { syncProducts } from './productsSync';
@@ -80,6 +81,8 @@ async function shopReport(shopId: string, day: { from: Date; to: Date }): Promis
     commissionPercent: (code) => (code ? (percentByCategory.get(code) ?? null) : null),
     commissionVatPercent: Number(shop.commissionVatPercent),
     paymentFeePercent: Number(shop.paymentFeePercent),
+    taxPercent: Number(shop.taxPercent),
+    customExpenses: parseCustomExpenses(shop.customExpenses),
   });
   const t = report.totals;
   const payout = t.revenue - t.commission - t.commissionVat - t.paymentFee - t.delivery;
@@ -90,7 +93,7 @@ async function shopReport(shopId: string, day: { from: Date; to: Date }): Promis
     // Товары на предзаказе не «заканчиваются»: остатка у них нет по определению
     where: { shopId, available: true, preOrder: null, stock: { lte: LOW_STOCK } },
     orderBy: [{ stock: 'asc' }, { name: 'asc' }],
-    select: { name: true, stock: true },
+    select: { id: true },
   });
 
   const lines = [
@@ -106,9 +109,8 @@ async function shopReport(shopId: string, day: { from: Date; to: Date }): Promis
   ];
   lines.push('', ...(await repricerLines(shopId)));
   if (lowStock.length > 0) {
+    // Только число: список товаров по одному делал отчёт слишком длинным
     lines.push('', `⚠️ Заканчиваются (≤ ${LOW_STOCK} шт): ${lowStock.length}`);
-    for (const p of lowStock.slice(0, 25)) lines.push(`• ${p.name} — ${p.stock === 0 ? 'нет в наличии' : `${p.stock} шт`}`);
-    if (lowStock.length > 25) lines.push(`… и ещё ${lowStock.length - 25}`);
   } else {
     lines.push('', `📦 Остатки в норме (у всех больше ${LOW_STOCK} шт)`);
   }
@@ -127,6 +129,7 @@ async function repricerLines(shopId: string): Promise<string[]> {
     select: { productId: true, floorPrice: true, product: { select: { name: true, price: true } } },
   });
   if (settings.length === 0) return ['🤖 Робот: не включён ни на одном товаре'];
+  const stopped = readerWarning(await readerLastSeen());
 
   const logs = await prisma.competitorLog.findMany({
     where: { productId: { in: settings.map((s) => s.productId) }, capturedAt: { gte: new Date(Date.now() - 2 * 60 * 60 * 1000) } },
@@ -147,6 +150,7 @@ async function repricerLines(shopId: string): Promise<string[]> {
 
   const lines = [
     `🤖 Робот: включён на ${settings.length} товарах`,
+    ...(stopped ? [stopped] : []),
     `🥇 Первые по цене в карточке: ${first.length} из ${checked.length}${checked.length < settings.length ? ` (нет свежих цен по ${settings.length - checked.length} — читатель цен был выключен)` : ''}`,
     `🧱 Достигли минимальной цены: ${atFloor.length}`,
   ];

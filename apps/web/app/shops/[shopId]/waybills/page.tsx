@@ -1,4 +1,6 @@
 import { api } from '@/lib/api';
+import { HelpTip } from '@/components/HelpTip';
+import { TIPS } from '@/lib/tips';
 import { PrintForm, ReprintForm } from './PrintForm';
 
 export const dynamic = 'force-dynamic';
@@ -36,7 +38,10 @@ export default async function WaybillsPage({ params }: { params: Promise<{ shopI
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Накладные</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight">Накладные</h1>
+            <HelpTip {...TIPS.waybills} />
+          </div>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
             Склеиваются только заказы из вкладки «Передача», которые ещё не печатались. «Упаковка» и уже переданные
             в доставку не затрагиваются.
@@ -47,11 +52,12 @@ export default async function WaybillsPage({ params }: { params: Promise<{ shopI
       <PrintForm shopId={shopId} shops={shops} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-medium text-slate-600">История склеек</h2>
+        <h2 className="mb-3 text-sm font-medium text-slate-600">История склеек <span className="font-normal text-slate-400">· хранится сутки</span></h2>
         {batches.length === 0 ? (
           <p className="text-sm text-slate-500">Пока ничего не склеивалось.</p>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="text-left text-xs text-slate-500">
                 <th className="pb-2 font-medium">Когда</th>
@@ -79,6 +85,7 @@ export default async function WaybillsPage({ params }: { params: Promise<{ shopI
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>

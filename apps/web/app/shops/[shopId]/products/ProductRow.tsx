@@ -4,7 +4,7 @@ import { useActionState, useRef, type FocusEvent } from 'react';
 import { saveProduct, syncProducts, type SaveState, type SyncState } from './actions';
 import { RowCheckbox } from './Bulk';
 import { PriceEdit, StoresCell, type StoreView } from './InlineEdit';
-import { COL } from './columns';
+import { COL, hiddenIn, type ColumnKey, type ProductsView } from './columns';
 
 export interface ProductView {
   id: string;
@@ -13,8 +13,10 @@ export interface ProductView {
   name: string;
   imageUrl: string | null;
   shopUrl: string | null;
-  /** Цена, ниже которой прибыль меньше 5%; null — нет себестоимости или комиссии. */
+  /** Цена при наименьшей наценке; null — нет себестоимости или комиссии. */
   minProfitablePrice: number | null;
+  /** Цена для каждого варианта наценки магазина; пусто — нет себестоимости или комиссии. */
+  minPrices: { percent: number; price: number | null; delivery: number | null }[];
   /** Вес, кг: из карточки Kaspi или введённый вручную. */
   weightKg: number | null;
   /** Доставка по тарифу Kaspi при этой цене, ₸. */
@@ -91,11 +93,12 @@ const botOnLabel = (p: ProductView) => (p.repricerSetting?.enabled ? 'ждёт �
  * Строка товара сохраняется сама: поле — когда из него уходят (или по Enter), если
  * значение изменилось; галочка бота — сразу при нажатии.
  */
-export function ProductRow({ shopId, product }: { shopId: string; product: ProductView }) {
+export function ProductRow({ shopId, product, view }: { shopId: string; product: ProductView; view: ProductsView }) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveProduct, {});
   const formRef = useRef<HTMLFormElement>(null);
   const setting = product.repricerSetting;
   const formId = `product-${product.id}`;
+  const v = (key: ColumnKey) => hiddenIn(view, key);
 
   const save = () => formRef.current?.requestSubmit();
   const saveIfChanged = (e: FocusEvent<HTMLInputElement>) => {
@@ -137,7 +140,7 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
       </td>
-      <td className={`${COL.price} px-3 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
+      <td className={`${v('price')} ${COL.price} px-3 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
         <PriceEdit shopId={shopId} productId={product.id} price={product.price} />
         {/* Как в Okto: под нашей ценой — цена первого места, если мы не первые */}
         {product.position !== null && product.position > 1 && product.topCompetitorPrice !== null && (
@@ -146,28 +149,33 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-center">
+      <td className={`${v('position')} px-3 py-2 text-center`}>
         <PositionCell product={product} />
       </td>
-      <td className="px-3 py-2 text-right">
+      <td className={`${v('stores')} px-3 py-2 text-right`}>
         <StoresCell shopId={shopId} productId={product.id} stores={product.stores ?? []} />
       </td>
-      <td className={`${COL.cost} px-3 py-2 text-right`}>
+      <td className={`${v('cost')} ${COL.cost} px-3 py-2 text-right`}>
         <input {...field} name="costPrice" defaultValue={product.costPrice ?? ''} placeholder="₸" aria-label="Себестоимость" className={`${INPUT} border-rose-300 font-semibold text-rose-800`} />
       </td>
       <td
-        className={`${COL.cost} px-3 py-2 text-right whitespace-nowrap tabular-nums`}
+        className={`${v('markup')} ${COL.cost} px-3 py-2 text-right whitespace-nowrap tabular-nums`}
         title={
           product.minProfitablePrice === null
-            ? 'Укажите себестоимость — тогда посчитаю цену, ниже которой прибыль меньше 5%'
-            : `Ниже этой цены прибыль меньше 5% после комиссии с НДС, Kaspi Pay и доставки ${product.minPriceDelivery} ₸ по тарифу Kaspi для такой суммы заказа`
+            ? 'Укажите себестоимость — тогда посчитаю цену для каждого варианта наценки'
+            : 'Цена, при которой прибыль равна наценке (+5% — 5% от цены) после комиссии с НДС, Kaspi Pay, налога, своих расходов и доставки по тарифу Kaspi'
         }
       >
         {product.minProfitablePrice === null ? (
           <span className="text-xs text-slate-400">—</span>
         ) : (
           <>
-            <span className="font-bold text-rose-800">{product.minProfitablePrice.toLocaleString('ru-RU')} ₸</span>
+            {product.minPrices.map((v) => (
+              <div key={v.percent} className="leading-tight">
+                <span className="text-[11px] font-normal text-rose-600">+{v.percent}% </span>
+                <span className="font-bold text-rose-800">{v.price === null ? '—' : `${v.price.toLocaleString('ru-RU')} ₸`}</span>
+              </div>
+            ))}
             {setting && setting.floorPrice < product.minProfitablePrice && (
               <div className="text-[11px] font-semibold text-red-600">мин. цена ниже!</div>
             )}
@@ -189,16 +197,16 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
           </label>
         )}
       </td>
-      <td className={`${COL.bot} px-3 py-2 text-right`}>
+      <td className={`${v('floor')} ${COL.bot} px-3 py-2 text-right`}>
         <input {...field} name="floorPrice" defaultValue={setting?.floorPrice ?? ''} placeholder="₸" aria-label="Минимальная цена" className={`${INPUT} border-amber-400 font-bold text-amber-900`} />
       </td>
-      <td className={`${COL.bot} px-3 py-2 text-right`}>
+      <td className={`${v('ceiling')} ${COL.bot} px-3 py-2 text-right`}>
         <input {...field} name="ceilingPrice" defaultValue={setting?.ceilingPrice ?? ''} placeholder="₸" aria-label="Максимальная цена" className={`${INPUT} border-amber-300 text-amber-900`} />
       </td>
-      <td className={`${COL.bot} px-3 py-2 text-right`}>
+      <td className={`${v('step')} ${COL.bot} px-3 py-2 text-right`}>
         <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className="w-14 rounded border border-amber-300 bg-white px-2 py-1 text-right text-amber-900 tabular-nums" />
       </td>
-      <td className={`${COL.preorder} px-3 py-2 text-right`}>
+      <td className={`${v('preorder')} ${COL.preorder} px-3 py-2 text-right`}>
         <input
           {...field}
           name="preorderDays"
@@ -216,7 +224,7 @@ export function ProductRow({ shopId, product }: { shopId: string; product: Produ
           <div className="mt-1 text-xs whitespace-nowrap text-slate-500">снят с продажи</div>
         ) : null}
       </td>
-      <td className={`${COL.toggle} px-3 py-2 text-center`}>
+      <td className={`${v('bot')} ${COL.toggle} px-3 py-2 text-center`}>
         <input form={formId} type="checkbox" name="enabled" defaultChecked={setting?.enabled ?? false} onChange={save} aria-label="Бот включён" className="h-5 w-5 accent-emerald-600" />
       </td>
       <td className="w-24 py-2 text-xs whitespace-nowrap">
@@ -239,7 +247,7 @@ export function SyncButton({ shopId }: { shopId: string }) {
   return (
     <form action={action} className="flex flex-col items-end gap-1">
       <input type="hidden" name="shopId" value={shopId} />
-      <button type="submit" disabled={pending} className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50">
+      <button type="submit" disabled={pending} className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-60">
         {pending ? 'Синхронизирую… (около минуты)' : 'Синхронизировать товары с Kaspi'}
       </button>
       {result && (

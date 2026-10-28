@@ -9,6 +9,7 @@ export const QUEUES = {
   preorder: 'preorder',
   offerEdit: 'offer-edit',
   reviews: 'reviews',
+  wbSync: 'wb-sync',
 } as const;
 
 /** Правка товара из таблицы «Робот»: цена или склад (остаток / наличие). */

@@ -7,12 +7,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./analytics": "./src/analytics/index.ts",
-    "./reviews": "./src/reviews.ts"
+    "./reviews": "./src/reviews.ts",
+    "./plans": "./src/plans.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "pdf-lib": "^1.17.1"
   }
 }

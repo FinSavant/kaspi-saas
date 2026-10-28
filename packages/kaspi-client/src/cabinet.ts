@@ -249,6 +249,11 @@ export function buildPriceUpdate(
   const enabled = (p: any) => p?.available === true;
   const target = cities.find((c) => String(c?.id) === cityId);
   const targetPoints = (Array.isArray(target?.pickupPoints) ? target.pickupPoints : []).filter(enabled);
+  // Снятый с продажи товар: Kaspi оставляет склады «включёнными», но без остатка — новая цена
+  // с такими складами вернула бы его в продажу
+  if (!preOrder && details?.available === false) {
+    throw new KaspiCabinetOutOfStockError(200, '', `Product ${details?.sku} is removed from sale`);
+  }
   if (!preOrder && target?.price && targetPoints.length > 0 && !targetPoints.some(hasStock)) {
     throw new KaspiCabinetOutOfStockError(200, '', `Product ${details?.sku} is out of stock in city ${cityId}`);
   }
@@ -350,12 +355,13 @@ export class KaspiCabinetClient {
     if (!/^\d{10}$/.test(digits)) throw new KaspiCabinetError(400, '', 'Номер телефона — 10 цифр после +7.');
     this.trace.length = 0;
     await this.startAuthorization();
-    const data = await this.postLogin({ _ph: digits });
+    // Как у входа по почте: Kaspi запоминает устройство — без этого вход живёт ровно 6 часов
+    const data = await this.postLogin({ _ph: digits, _r_d: true });
     return String(data?.phone ?? digits);
   }
 
   async submitSmsCode(code: string, merchantId: string): Promise<CabinetLoginResult> {
-    const data = await this.postLogin({ _c: code.trim() });
+    const data = await this.postLogin({ _c: code.trim(), _r_d: true });
     return this.finishLogin(data, merchantId);
   }
 

@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import { HelpTip } from '@/components/HelpTip';
+import { TIPS } from '@/lib/tips';
 import { api } from '@/lib/api';
-import { FeesForm } from '../analytics/forms';
+import { ExpensesForm, FeesForm } from '../analytics/forms';
 import { CabinetLoginForm, ChatLoginForm, ReportNowButton } from '../../ShopForms';
 
 export const dynamic = 'force-dynamic';
@@ -17,7 +19,8 @@ interface ShopSettings {
   productsSyncedAt: string | null;
   ordersSyncedAt: string | null;
   repricerEnabled: boolean;
-  fees: { commissionVatPercent: number; paymentFeePercent: number };
+  fees: { commissionVatPercent: number; paymentFeePercent: number; taxPercent: number };
+  customExpenses: { name: string; percent: number }[];
 }
 
 const CITIES: Record<string, string> = { '750000000': 'Алматы', '710000000': 'Астана', '620000000': 'Шымкент' };
@@ -58,7 +61,10 @@ export default async function SettingsPage({
 
   return (
     <div className="max-w-3xl space-y-5">
-      <h1 className="text-2xl font-bold tracking-tight">Настройки</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold tracking-tight">Настройки</h1>
+        <HelpTip {...TIPS.settings} />
+      </div>
 
       {added && (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -123,8 +129,17 @@ export default async function SettingsPage({
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 font-semibold">Удержания Kaspi для расчёта прибыли</h2>
-        <FeesForm shopId={shopId} commissionVatPercent={s.fees.commissionVatPercent} paymentFeePercent={s.fees.paymentFeePercent} />
+        <FeesForm shopId={shopId} commissionVatPercent={s.fees.commissionVatPercent} paymentFeePercent={s.fees.paymentFeePercent} taxPercent={s.fees.taxPercent} />
         <p className="mt-3 text-xs text-slate-500">Ставки комиссии по категориям — в «Аналитика» → «Прибыль».</p>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-1 font-semibold">Свои расходы</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          До 4 статей в процентах от выручки: реклама, упаковка, зарплата и т. п. Вычитаются из прибыли в «Аналитике» и учитываются в
+          минимальной цене робота.
+        </p>
+        <ExpensesForm shopId={shopId} expenses={s.customExpenses} />
       </section>
 
       <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Кабинет продавца Kaspi',
+  title: 'SANQ — кабинет продавца Kaspi',
   description: 'Накладные, робот цен и аналитика для продавцов Kaspi.kz',
 };
 

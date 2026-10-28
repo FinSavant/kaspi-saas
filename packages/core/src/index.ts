@@ -8,4 +8,7 @@ export * from './pdf/mergeWaybills';
 export * from './waybills/selectOrders';
 export * from './analytics';
 export * from './crypto';
+export * from './plans';
+export * from './auth';
 export * from './queues';
+export * from './wb/parseReport';

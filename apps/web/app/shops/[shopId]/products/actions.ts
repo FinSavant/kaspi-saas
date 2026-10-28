@@ -58,7 +58,7 @@ export async function saveProduct(_prev: SaveState, formData: FormData): Promise
     return { error: error instanceof Error ? error.message : 'Не удалось сохранить.' };
   }
 
-  revalidatePath(`/shops/${shopId}/products`);
+  revalidatePath(`/shops/${shopId}`, 'layout');
   return { ok: true };
 }
 
@@ -84,7 +84,7 @@ export async function editOffer(
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось сохранить в Kaspi.' };
   }
-  revalidatePath(`/shops/${shopId}/products`);
+  revalidatePath(`/shops/${shopId}`, 'layout');
   return { ok: true };
 }
 
@@ -101,14 +101,16 @@ export async function bulkUpdate(
   if (raw !== '' && !/^\d+$/.test(raw)) return { error: 'Введите целое число.' };
   const value = raw === '' ? null : Number(raw);
   try {
-    const result = await api<{ updated: number; skipped: string[] }>(`/shops/${shopId}/products/bulk`, {
+    const result = await api<{ updated: number; skipped: string[]; limit?: string }>(`/shops/${shopId}/products/bulk`, {
       method: 'POST',
       body: { productIds, action, value },
     });
-    revalidatePath(`/shops/${shopId}/products`);
+    revalidatePath(`/shops/${shopId}`, 'layout');
     const skipped = result.skipped.length
       ? ` Пропущено: ${result.skipped.length} — ${action === 'ceiling' ? 'нет мин. цены или макс. ниже мин.' : action === 'floor' ? 'мин. выше макс.' : 'не задана минимальная цена'}.`
       : '';
+    // Лимит тарифа — отдельной ошибкой, чтобы было видно, почему робот включился не везде
+    if (result.limit) return { error: `Включено: ${result.updated}. ${result.limit}` };
     return { message: `Готово: ${result.updated}.${skipped}` };
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось применить.' };
@@ -124,9 +126,23 @@ export async function syncProducts(_prev: SyncState, formData: FormData): Promis
   const shopId = String(formData.get('shopId'));
   try {
     const result = await api<NonNullable<SyncState['result']>>(`/shops/${shopId}/products/sync`, { method: 'POST' });
-    revalidatePath(`/shops/${shopId}/products`);
+    revalidatePath(`/shops/${shopId}`, 'layout');
     return { result };
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось синхронизировать товары.' };
   }
+}
+
+/** Варианты наценки для колонки «Мин. с наценкой»: числа через поля, пустые не считаются. */
+export async function saveMarkups(_prev: SaveState, formData: FormData): Promise<SaveState> {
+  const shopId = String(formData.get('shopId'));
+  const raw = formData.getAll('markup').map((v) => String(v).trim()).filter(Boolean);
+  if (raw.some((v) => !/^\d{1,2}$/.test(v))) return { error: 'Наценка — целое число процентов, например 5.' };
+  try {
+    await api(`/shops/${shopId}/markups`, { method: 'PUT', body: { percents: raw.map(Number) } });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Не удалось сохранить.' };
+  }
+  revalidatePath(`/shops/${shopId}`, 'layout');
+  return { ok: true };
 }

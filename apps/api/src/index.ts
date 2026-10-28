@@ -1,17 +1,38 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   NOT_SOLD_STATUSES,
   QUEUES,
   buildBreakdowns,
   buildSalesReport,
+  buildWbBreakdowns,
+  buildWbReport,
+  parseWbReportFile,
   concatPdfs,
   minProfitablePrice,
   DEFAULT_TEMPLATES,
   TEMPLATE_PARAMS,
   redisConnectionFromUrl,
+  READER_LAST_SEEN_KEY,
   SNAPSHOT_TTL_SEC,
   snapshotKey,
   telegramLinkCode,
+  PLANS,
+  SESSION_DAYS,
+  MIN_PASSWORD_LENGTH,
+  hashPassword,
+  isValidEmail,
+  newSessionToken,
+  normalizeEmail,
+  sessionTokenHash,
+  verifyPassword,
+  REVIEWS_ADDON_PRICE,
+  TRIAL_DAYS,
+  getPlan,
+  subscriptionState,
+  customExpensesPercent,
+  parseCustomExpenses,
+  MAX_CUSTOM_EXPENSES,
+  ownerAccess,
   type OfferEditJob,
   type ReportJob,
   type OffersSnapshot,
@@ -50,6 +71,7 @@ const productsSyncEvents = new QueueEvents(QUEUES.productsSync, { connection });
 const SYNC_TIMEOUT_MS = 600_000;
 const ordersSyncQueue = new Queue<OrdersSyncJob>(QUEUES.ordersSync, { connection });
 const preorderQueue = new Queue(QUEUES.preorder, { connection });
+const wbQueue = new Queue(QUEUES.wbSync, { connection });
 
 /** Дни предзаказа поменялись — применяем сразу, не дожидаясь проверки раз в 5 минут. */
 async function applyPreordersNow(): Promise<void> {
@@ -84,7 +106,157 @@ app.addHook('onRequest', async (request, reply) => {
   }
 });
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Продавец, вошедший в веб-кабинет; нет — вызов от своих служб (бот, читатель цен) */
+    user?: { id: string; isAdmin: boolean };
+  }
+}
+
+// Веб-кабинет передаёт токен сессии продавца; бот и читатель цен ходят без него
+const SESSION_HEADER = 'x-user-session';
+// Разделы только для владельца платформы: админка, Wildberries, общие ставки комиссий, читатель цен
+const ADMIN_ONLY = [/^\/admin(\/|$)/, /^\/shops\/[^/]+\/(wb|wildberries)(\/|$)/, /^\/commissions\//, /^\/reader\//];
+
+/** Магазины, к которым относится запрос: из shopId, товара, склейки или списка склеек. */
+async function requestShopIds(path: string, params: Record<string, string | undefined>, query: Record<string, string | undefined>) {
+  const ids: string[] = [];
+  if (params.shopId) ids.push(params.shopId);
+  if (params.productId) {
+    const product = await prisma.product.findUnique({ where: { id: params.productId }, select: { shopId: true } });
+    ids.push(product?.shopId ?? '');
+  }
+  if (params.batchId) {
+    const batch = await prisma.waybillBatch.findUnique({ where: { id: params.batchId }, select: { shopId: true } });
+    ids.push(batch?.shopId ?? '');
+  }
+  if (path === '/waybill-batches/combined/pdf') {
+    const batchIds = String(query.ids ?? '').split(',').filter(Boolean);
+    const batches = await prisma.waybillBatch.findMany({ where: { id: { in: batchIds } }, select: { shopId: true } });
+    ids.push(...batches.map((b) => b.shopId));
+  }
+  return [...new Set(ids)];
+}
+
+// Продавец видит только свои магазины; владелец платформы — все
+app.addHook('preHandler', async (request, reply) => {
+  const token = request.headers[SESSION_HEADER];
+  if (typeof token !== 'string' || !token) return;
+  const session = await prisma.session.findUnique({ where: { tokenHash: sessionTokenHash(token) }, include: { user: true } });
+  if (!session || session.expiresAt < new Date()) return reply.code(401).send({ error: 'login required' });
+  request.user = { id: session.userId, isAdmin: session.user.isAdmin };
+  if (request.user.isAdmin) return;
+
+  const path = request.url.split('?')[0]!;
+  if (ADMIN_ONLY.some((re) => re.test(path))) return reply.code(403).send({ error: 'forbidden' });
+  const shopIds = await requestShopIds(
+    path,
+    (request.params ?? {}) as Record<string, string | undefined>,
+    (request.query ?? {}) as Record<string, string | undefined>,
+  );
+  if (shopIds.length > 0) {
+    const owned = await prisma.shop.count({ where: { id: { in: shopIds }, ownerId: request.user.id } });
+    if (owned !== shopIds.length) return reply.code(404).send({ error: 'shop not found' });
+  }
+
+  // Тариф истёк: открыты только вход, список магазинов и «Тарифы»; данные не трогаются
+  if (EXPIRED_ALLOWED.some((re) => re.test(path))) return;
+  if (!(await accessForUser(request.user.id)).active) {
+    return reply.code(402).send({ error: 'Срок тарифа истёк. Обновите тариф, чтобы продолжить.', code: 'expired' });
+  }
+});
+
+const EXPIRED_ALLOWED = [/^\/auth\//, /^\/shops$/, /^\/shops\/[^/]+\/billing$/];
+
+async function accessForUser(userId: string) {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, include: { subscription: true } });
+  return ownerAccess(user);
+}
+
+async function accessForShop(shopId: string) {
+  const shop = await prisma.shop.findUniqueOrThrow({ where: { id: shopId }, select: { ownerId: true } });
+  return { ownerId: shop.ownerId, ...(await accessForUser(shop.ownerId)) };
+}
+
+const preorderLimitError = (max: number) =>
+  max === 0
+    ? 'Предзаказ не входит в ваш тариф. Выберите «Старт» или «Pro» на вкладке «Тарифы».'
+    : `Лимит тарифа: предзаказ до ${max} товаров. Увеличьте лимит на вкладке «Тарифы».`;
+
+const robotLimitError = (max: number) =>
+  `Лимит тарифа: робот ведёт до ${max} товаров. Увеличьте лимит на вкладке «Тарифы».`;
+
 app.get('/health', async () => ({ status: 'ok' }));
+
+async function startSession(userId: string) {
+  const { token, tokenHash } = newSessionToken();
+  await prisma.session.create({ data: { userId, tokenHash, expiresAt: new Date(Date.now() + SESSION_DAYS * DAY_MS) } });
+  return { token, maxAgeSec: SESSION_DAYS * 24 * 60 * 60 };
+}
+
+// Неудачные попытки входа по email: после 10 за 15 минут вход временно закрыт
+const failedLogins = new Map<string, { count: number; since: number }>();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+function loginBlocked(email: string): boolean {
+  const entry = failedLogins.get(email);
+  if (!entry || Date.now() - entry.since > LOGIN_WINDOW_MS) return false;
+  return entry.count >= 10;
+}
+function noteFailedLogin(email: string): void {
+  const entry = failedLogins.get(email);
+  if (!entry || Date.now() - entry.since > LOGIN_WINDOW_MS) failedLogins.set(email, { count: 1, since: Date.now() });
+  else entry.count += 1;
+}
+
+/**
+ * Регистрация продавца: аккаунт, пробный период и сессия. Email из SANQ_ADMIN_EMAIL
+ * при первой регистрации получает аккаунт владельца платформы с его нынешними магазинами.
+ */
+app.post<{ Body: { email?: string; password?: string; name?: string } }>('/auth/register', async (request, reply) => {
+  const email = normalizeEmail(String(request.body?.email ?? ''));
+  const password = String(request.body?.password ?? '');
+  const name = String(request.body?.name ?? '').trim() || null;
+  if (!isValidEmail(email)) return reply.code(400).send({ error: 'Проверьте email.' });
+  if (password.length < MIN_PASSWORD_LENGTH) return reply.code(400).send({ error: `Пароль — не короче ${MIN_PASSWORD_LENGTH} символов.` });
+  if (await prisma.user.findUnique({ where: { email } })) return reply.code(409).send({ error: 'Этот email уже зарегистрирован. Войдите.' });
+
+  const adminEmail = normalizeEmail(process.env.SANQ_ADMIN_EMAIL ?? '');
+  const unclaimedAdmin = adminEmail && email === adminEmail ? await prisma.user.findFirst({ where: { isAdmin: true, email: null } }) : null;
+  const user = unclaimedAdmin
+    ? await prisma.user.update({
+        where: { id: unclaimedAdmin.id },
+        data: { email, passwordHash: hashPassword(password), name: name ?? unclaimedAdmin.name },
+      })
+    : await prisma.user.create({ data: { email, passwordHash: hashPassword(password), name } });
+  await ownerSubscription(user.id);
+  return startSession(user.id);
+});
+
+app.post<{ Body: { email?: string; password?: string } }>('/auth/login', async (request, reply) => {
+  const email = normalizeEmail(String(request.body?.email ?? ''));
+  const password = String(request.body?.password ?? '');
+  if (loginBlocked(email)) return reply.code(429).send({ error: 'Слишком много попыток. Попробуйте через 15 минут.' });
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    noteFailedLogin(email);
+    return reply.code(401).send({ error: 'Неверный email или пароль.' });
+  }
+  failedLogins.delete(email);
+  return startSession(user.id);
+});
+
+app.post('/auth/logout', async (request) => {
+  const token = request.headers[SESSION_HEADER];
+  if (typeof token === 'string' && token) await prisma.session.deleteMany({ where: { tokenHash: sessionTokenHash(token) } });
+  return { ok: true };
+});
+
+app.get('/auth/me', async (request, reply) => {
+  if (!request.user) return reply.code(401).send({ error: 'login required' });
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: request.user.id } });
+  return { id: user.id, email: user.email, name: user.name, isAdmin: user.isAdmin };
+});
+
 
 app.get<{ Params: { shopId: string } }>('/feeds/:shopId/price.xml', async (request, reply) => {
   const shop = await prisma.shop.findUnique({
@@ -127,12 +299,19 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/settings', async (reques
     ordersSyncedAt: shop.ordersSyncedAt,
     repricerEnabled: shop.repricerEnabled,
     priceFeedPath: `/feeds/${shop.id}/price.xml`,
-    fees: { commissionVatPercent: Number(shop.commissionVatPercent), paymentFeePercent: Number(shop.paymentFeePercent) },
+    fees: { commissionVatPercent: Number(shop.commissionVatPercent), paymentFeePercent: Number(shop.paymentFeePercent), taxPercent: Number(shop.taxPercent) },
+    customExpenses: parseCustomExpenses(shop.customExpenses),
+    markupPercents: shop.markupPercents,
   };
 });
 
-app.get('/shops', async () =>
-  prisma.shop.findMany({ select: { id: true, name: true, merchantId: true }, orderBy: { createdAt: 'asc' } }),
+// Список — только свои магазины (и у владельца платформы тоже); чужие он открывает из админки
+app.get('/shops', async (request) =>
+  prisma.shop.findMany({
+    where: request.user ? { ownerId: request.user.id } : {},
+    select: { id: true, name: true, merchantId: true },
+    orderBy: { createdAt: 'asc' },
+  }),
 );
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -234,6 +413,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
       commissionPercent: (code: string | null) => (code ? (percentByCategory.get(code) ?? null) : null),
       commissionVatPercent: Number(shop.commissionVatPercent),
       paymentFeePercent: Number(shop.paymentFeePercent),
+      taxPercent: Number(shop.taxPercent),
+      customExpenses: parseCustomExpenses(shop.customExpenses),
     };
 
     const current = buildSalesReport(reportOrders, { from, to, ...fees });
@@ -287,7 +468,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
       current,
       previous: previous.totals,
       unitCosts,
-      fees: { commissionVatPercent: fees.commissionVatPercent, paymentFeePercent: fees.paymentFeePercent },
+      fees: { commissionVatPercent: fees.commissionVatPercent, paymentFeePercent: fees.paymentFeePercent, taxPercent: fees.taxPercent },
+      customExpenses: fees.customExpenses,
       commissions: [...soldCategories].map(([category, title]) => ({
         category,
         title,
@@ -331,6 +513,13 @@ const trimmed = (value: unknown) => (typeof value === 'string' ? value.trim() : 
 app.post<{ Body: { name?: string; merchantId?: string; apiToken?: string; mcLogin?: string; mcPassword?: string } }>(
   '/shops',
   async (request, reply) => {
+    if (request.user) {
+      const access = await accessForUser(request.user.id);
+      const shops = await prisma.shop.count({ where: { ownerId: request.user.id } });
+      if (shops >= access.maxShops) {
+        return reply.code(402).send({ error: `Лимит тарифа: ${access.maxShops === 1 ? "1 магазин" : `до ${access.maxShops} магазинов`}. Увеличьте лимит на вкладке «Тарифы».`, code: 'limit' });
+      }
+    }
     const name = trimmed(request.body?.name);
     const merchantId = trimmed(request.body?.merchantId);
     const apiToken = trimmed(request.body?.apiToken);
@@ -353,12 +542,14 @@ app.post<{ Body: { name?: string; merchantId?: string; apiToken?: string; mcLogi
     }
 
     const key = encryptionKey();
-    // Входа пользователей пока нет: все магазины у одного служебного владельца, как в add-shop
-    const owner = await prisma.user.upsert({
-      where: { phone: 'local-owner' },
-      create: { phone: 'local-owner', passwordHash: '!', name: 'Локальный владелец' },
-      update: {},
-    });
+    // Магазин принадлежит вошедшему продавцу; без входа (скрипты) — служебному владельцу
+    const owner = request.user
+      ? { id: request.user.id }
+      : await prisma.user.upsert({
+          where: { phone: 'local-owner' },
+          create: { phone: 'local-owner', passwordHash: '!', name: 'Локальный владелец', isAdmin: true },
+          update: {},
+        });
     const shop = await prisma.shop.create({
       data: {
         ownerId: owner.id,
@@ -367,7 +558,6 @@ app.post<{ Body: { name?: string; merchantId?: string; apiToken?: string; mcLogi
         apiTokenEnc: encryptSecret(apiToken, key),
         mcLoginEnc: mcLogin ? encryptSecret(mcLogin, key) : null,
         mcPasswordEnc: mcPassword ? encryptSecret(mcPassword, key) : null,
-        subscription: { create: { status: 'TRIAL', trialEndsAt: new Date(Date.now() + 7 * DAY_MS) } },
       },
     });
 
@@ -452,7 +642,8 @@ const pendingChatLogins = new Map<string, { client: KaspiCabinetClient; phone: s
 app.post<{ Params: { shopId: string }; Body: { phone?: string } }>('/shops/:shopId/chat/login', async (request, reply) => {
   const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
   if (!shop) return reply.code(404).send({ error: 'shop not found' });
-  const phone = trimmed(request.body?.phone);
+  // Без номера — повторный вход тем же номером (кнопка в Telegram)
+  const phone = trimmed(request.body?.phone) || shop.chatPhone || '';
   const client = new KaspiCabinetClient();
   try {
     const sentTo = await client.startPhoneLogin(phone);
@@ -559,6 +750,8 @@ app.post<{ Body: { masterSku?: string; cityId?: string; offers?: unknown } }>('/
   const snapshot: OffersSnapshot = { at: new Date().toISOString(), offers: clean };
   const redis = await ordersSyncQueue.client;
   await redis.set(snapshotKey({ masterSku, cityId }), JSON.stringify(snapshot), { EX: SNAPSHOT_TTL_SEC });
+  // Отметка «читатель цен жив» — бот и отчёт предупреждают, если она устарела
+  await redis.set(READER_LAST_SEEN_KEY, String(Date.now()));
   // Число продавцов в карточке — для списка «открытых» карточек
   await prisma.product.updateMany({
     where: { kaspiMasterSku: masterSku, shop: { cityId } },
@@ -582,6 +775,51 @@ async function telegramBotUsername(): Promise<string | null> {
   return botUsername;
 }
 
+// Вход через Telegram: браузер получает одноразовый код и ссылку на бота, продавец
+// подтверждает вход в боте, браузер обменивает подтверждённый код на сессию.
+// В Redis: tg-login:<код> = «pending» или id продавца; живёт 10 минут.
+const TG_LOGIN_TTL_SEC = 600;
+const tgLoginKey = (code: string) => `tg-login:${code}`;
+
+app.post('/auth/telegram/start', async (_request, reply) => {
+  const username = await telegramBotUsername();
+  if (!username) return reply.code(503).send({ error: 'Вход через Telegram пока недоступен.' });
+  const code = randomBytes(12).toString('hex');
+  await (await ordersSyncQueue.client).set(tgLoginKey(code), 'pending', { EX: TG_LOGIN_TTL_SEC });
+  return { code, url: `https://t.me/${username}?start=login_${code}` };
+});
+
+/** Вызывает бот, когда продавец нажал «Подтвердить вход». Нового продавца регистрирует. */
+app.post<{ Body: { code?: string; chatId?: string; name?: string } }>('/auth/telegram/confirm', async (request, reply) => {
+  if (request.user) return reply.code(403).send({ error: 'forbidden' });
+  const code = String(request.body?.code ?? '');
+  const chatId = String(request.body?.chatId ?? '');
+  const redis = await ordersSyncQueue.client;
+  if (!chatId || (await redis.get(tgLoginKey(code))) !== 'pending') {
+    return reply.code(400).send({ error: 'Ссылка для входа устарела. Нажмите «Войти через Telegram» на сайте ещё раз.' });
+  }
+  let user = await prisma.user.findUnique({ where: { telegramChatId: chatId } });
+  const created = !user;
+  if (!user) {
+    // Пароля нет: такой продавец входит только через Telegram
+    user = await prisma.user.create({ data: { telegramChatId: chatId, passwordHash: '!', name: String(request.body?.name ?? '').trim() || null } });
+    await ownerSubscription(user.id);
+  }
+  await redis.set(tgLoginKey(code), user.id, { EX: TG_LOGIN_TTL_SEC });
+  return { ok: true, created };
+});
+
+/** Браузер спрашивает, подтверждён ли вход; при подтверждении получает сессию. */
+app.post<{ Body: { code?: string } }>('/auth/telegram/finish', async (request, reply) => {
+  const code = String(request.body?.code ?? '');
+  const redis = await ordersSyncQueue.client;
+  const value = code ? await redis.get(tgLoginKey(code)) : null;
+  if (!value) return reply.code(410).send({ error: 'Время на вход истекло. Попробуйте ещё раз.' });
+  if (value === 'pending') return { pending: true };
+  await redis.del(tgLoginKey(code));
+  return startSession(value);
+});
+
 /** Состояние Telegram владельца магазина и ссылка для привязки чата. */
 app.get<{ Params: { shopId: string } }>('/shops/:shopId/telegram', async (request, reply) => {
   const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId }, include: { owner: true } });
@@ -602,24 +840,159 @@ app.post<{ Params: { shopId: string } }>('/shops/:shopId/telegram/report', async
   return reply.code(202).send({ ok: true });
 });
 
+/** Подписка продавца; у нового продавца создаётся с пробным периодом. */
+async function ownerSubscription(userId: string) {
+  return prisma.subscription.upsert({
+    where: { userId },
+    create: { userId, plan: 'start', trialEndsAt: new Date(Date.now() + TRIAL_DAYS * DAY_MS) },
+    update: {},
+  });
+}
+
+/** Сколько товаров под роботом и сколько магазинов у продавца — для лимитов тарифа. */
+async function ownerUsage(userId: string) {
+  const [shops, robotProducts, preorderProducts] = await Promise.all([
+    prisma.shop.count({ where: { ownerId: userId } }),
+    prisma.repricerSetting.count({ where: { enabled: true, product: { shop: { ownerId: userId } } } }),
+    prisma.product.count({ where: { preorderDays: { not: null }, shop: { ownerId: userId } } }),
+  ]);
+  return { shops, robotProducts, preorderProducts };
+}
+
+/** Номер WhatsApp владельца платформы для оплаты, только цифры (77001234567). */
+const whatsappNumber = (process.env.SANQ_WHATSAPP ?? '').replace(/D/g, '') || null;
+
+function serializeBilling(user: { isAdmin: boolean }, sub: Awaited<ReturnType<typeof ownerSubscription>>, usage: Awaited<ReturnType<typeof ownerUsage>>) {
+  const state = subscriptionState(sub);
+  return {
+    isAdmin: user.isAdmin,
+    plan: state.plan.id,
+    status: user.isAdmin ? 'paid' : state.status,
+    activeUntil: user.isAdmin ? null : state.activeUntil,
+    reviewsAddon: sub.reviewsAddon,
+    reviewsAllowed: user.isAdmin || state.reviewsAllowed,
+    // Открытые разделы кабинета (меню и страницы прячут остальные)
+    features: ownerAccess({ isAdmin: user.isAdmin, subscription: sub }).features,
+    monthlyPrice: state.monthlyPrice,
+    usage,
+  };
+}
+
+async function billingFor(user: { id: string; isAdmin: boolean }) {
+  const [sub, usage] = await Promise.all([ownerSubscription(user.id), ownerUsage(user.id)]);
+  return {
+    ...serializeBilling(user, sub, usage),
+    plans: PLANS,
+    reviewsAddonPrice: REVIEWS_ADDON_PRICE,
+    trialDays: TRIAL_DAYS,
+    whatsapp: whatsappNumber,
+  };
+}
+
+/** Тариф, срок доступа и использование лимитов продавца, которому принадлежит магазин. */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/billing', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId }, include: { owner: true } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  return billingFor(shop.owner);
+});
+
+/** То же для вошедшего продавца — для экрана «обновите тариф», где магазина может не быть. */
+app.get('/auth/billing', async (request, reply) => {
+  if (!request.user) return reply.code(401).send({ error: 'login required' });
+  return billingFor(await prisma.user.findUniqueOrThrow({ where: { id: request.user.id } }));
+});
+
+/** Админка владельца платформы: все продавцы и их подписки. */
+app.get('/admin/subscriptions', async () => {
+  const users = await prisma.user.findMany({
+    include: { subscription: true, shops: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  return Promise.all(
+    users.map(async (u) => ({
+      userId: u.id,
+      name: u.name,
+      login: u.email ?? u.phone ?? '',
+      shops: u.shops.map((s) => s.name),
+      trialEndsAt: u.subscription?.trialEndsAt ?? null,
+      paidUntil: u.subscription?.paidUntil ?? null,
+      ...serializeBilling(u, await ownerSubscription(u.id), await ownerUsage(u.id)),
+    })),
+  );
+});
+
+/** Ручное продление после оплаты в WhatsApp: тариф, доплата за отзывы и срок «оплачено до». */
+app.put<{ Params: { userId: string }; Body: { plan?: string; reviewsAddon?: boolean; paidUntil?: string | null; addMonths?: number } }>(
+  '/admin/subscriptions/:userId',
+  async (request, reply) => {
+    const { plan, reviewsAddon, paidUntil, addMonths } = request.body ?? {};
+    if (plan !== undefined && getPlan(plan).id !== plan) return reply.code(400).send({ error: 'Неизвестный тариф' });
+    const sub = await ownerSubscription(request.params.userId);
+    let until: Date | null | undefined;
+    if (paidUntil !== undefined) {
+      until = paidUntil ? new Date(paidUntil) : null;
+      if (until && Number.isNaN(until.getTime())) return reply.code(400).send({ error: 'Неверная дата' });
+    }
+    if (addMonths) {
+      // Продление считается от конца текущей оплаты, если она ещё идёт, иначе от сегодня
+      const base = sub.paidUntil && sub.paidUntil > new Date() ? new Date(sub.paidUntil) : new Date();
+      base.setMonth(base.getMonth() + addMonths);
+      until = base;
+    }
+    await prisma.subscription.update({
+      where: { userId: request.params.userId },
+      data: { plan, reviewsAddon, paidUntil: until },
+    });
+    return { ok: true };
+  },
+);
+
 const isPercent = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
 
-app.patch<{ Params: { shopId: string }; Body: { commissionVatPercent?: number; paymentFeePercent?: number } }>(
+app.patch<{ Params: { shopId: string }; Body: { commissionVatPercent?: number; paymentFeePercent?: number; taxPercent?: number } }>(
   '/shops/:shopId/fees',
   async (request, reply) => {
-    const { commissionVatPercent, paymentFeePercent } = request.body ?? {};
-    for (const value of [commissionVatPercent, paymentFeePercent]) {
+    const { commissionVatPercent, paymentFeePercent, taxPercent } = request.body ?? {};
+    for (const value of [commissionVatPercent, paymentFeePercent, taxPercent]) {
       if (value !== undefined && !isPercent(value)) return reply.code(400).send({ error: 'percent must be between 0 and 100' });
     }
     const shop = await prisma.shop.update({
       where: { id: request.params.shopId },
-      data: { commissionVatPercent, paymentFeePercent },
-      select: { commissionVatPercent: true, paymentFeePercent: true },
+      data: { commissionVatPercent, paymentFeePercent, taxPercent },
+      select: { commissionVatPercent: true, paymentFeePercent: true, taxPercent: true },
     });
-    return { commissionVatPercent: Number(shop.commissionVatPercent), paymentFeePercent: Number(shop.paymentFeePercent) };
+    return {
+      commissionVatPercent: Number(shop.commissionVatPercent),
+      paymentFeePercent: Number(shop.paymentFeePercent),
+      taxPercent: Number(shop.taxPercent),
+    };
   },
 );
+
+/** Варианты наценки для «Мин. цены» робота: 1–3 целых процента прибыли от цены. */
+app.put<{ Params: { shopId: string }; Body: { percents?: unknown } }>('/shops/:shopId/markups', async (request, reply) => {
+  const raw = Array.isArray(request.body?.percents) ? request.body.percents : [];
+  const percents = [...new Set(raw)].filter((v): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 90);
+  if (percents.length === 0 || percents.length > 3 || percents.length !== raw.length) {
+    return reply.code(400).send({ error: 'От 1 до 3 разных целых процентов, например 5 и 10.' });
+  }
+  percents.sort((a, b) => a - b);
+  await prisma.shop.update({ where: { id: request.params.shopId }, data: { markupPercents: percents } });
+  return { markupPercents: percents };
+});
+
+/** Свои расходы продавца: до 4 строк «название + % от выручки», учитываются в Аналитике и в мин. цене робота. */
+app.put<{ Params: { shopId: string }; Body: { expenses?: unknown } }>('/shops/:shopId/expenses', async (request, reply) => {
+  const raw = Array.isArray(request.body?.expenses) ? request.body.expenses : [];
+  if (raw.length > MAX_CUSTOM_EXPENSES) return reply.code(400).send({ error: `Не больше ${MAX_CUSTOM_EXPENSES} строк.` });
+  for (const e of raw) {
+    if (typeof e?.percent !== 'number' || !isPercent(e.percent)) return reply.code(400).send({ error: 'Процент — число от 0 до 100.' });
+  }
+  const expenses = parseCustomExpenses(raw);
+  await prisma.shop.update({ where: { id: request.params.shopId }, data: { customExpenses: expenses.map((e) => ({ ...e })) } });
+  return { customExpenses: expenses };
+});
 
 app.put<{ Params: { category: string }; Body: { percent?: number | null; title?: string | null } }>(
   '/commissions/:category',
@@ -704,6 +1077,102 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybills/candidates', as
   return result;
 });
 
+/**
+ * Экран «Сборка», как лист подбора на WB: заказы из «Передачи», сгруппированные по товару.
+ * Позиции — из базы (их уже загрузила синхронизация заказов), у новых заказов — у Kaspi.
+ */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/picking', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const client = new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey()));
+  const orders = (await client.listOrders({ state: 'KASPI_DELIVERY', from: new Date(Date.now() - 14 * DAY_MS) })).filter(isAwaitingHandover);
+  const codes = orders.map((o) => o.code);
+
+  const [saved, marks] = await Promise.all([
+    prisma.order.findMany({ where: { shopId: shop.id, code: { in: codes }, itemsSyncedAt: { not: null } }, include: { items: true } }),
+    prisma.pickingMark.findMany({ where: { shopId: shop.id, orderCode: { in: codes } } }),
+  ]);
+  const savedItems = new Map(saved.map((o) => [o.code, o.items.map((i) => ({ sku: i.kaspiSku, name: i.name, quantity: i.quantity, categoryTitle: i.categoryTitle }))]));
+  const lines: { orderCode: string; express: boolean; city: string | null; sku: string; name: string; quantity: number; categoryTitle: string | null }[] = [];
+  for (const order of orders) {
+    const items = savedItems.get(order.code) ?? (await client.getOrderEntries(order.id).catch(() => []));
+    for (const i of items) {
+      lines.push({ orderCode: order.code, express: order.express, city: order.city, sku: i.sku, name: i.name, quantity: i.quantity, categoryTitle: i.categoryTitle ?? null });
+    }
+  }
+
+  const products = await prisma.product.findMany({
+    where: { shopId: shop.id, kaspiSku: { in: [...new Set(lines.map((l) => l.sku))] } },
+    select: { kaspiSku: true, name: true, imageUrl: true, brand: true },
+  });
+  const productBySku = new Map(products.map((p) => [p.kaspiSku, p]));
+  const markOf = new Map(marks.map((m) => [`${m.orderCode}:${m.sku}`, m]));
+
+  const groups = new Map<string, { sku: string; name: string; imageUrl: string | null; brand: string | null; categoryTitle: string | null; quantity: number; orders: object[] }>();
+  for (const line of lines) {
+    const product = productBySku.get(line.sku);
+    const group = groups.get(line.sku) ?? {
+      sku: line.sku,
+      name: product?.name ?? line.name,
+      imageUrl: product?.imageUrl ?? null,
+      brand: product?.brand ?? null,
+      categoryTitle: line.categoryTitle,
+      quantity: 0,
+      orders: [],
+    };
+    const mark = markOf.get(`${line.orderCode}:${line.sku}`);
+    group.quantity += line.quantity;
+    group.orders.push({
+      code: line.orderCode,
+      quantity: line.quantity,
+      express: line.express,
+      city: line.city,
+      collected: mark?.collected ?? false,
+      packed: mark?.packed ?? false,
+    });
+    groups.set(line.sku, group);
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+});
+
+/** Галочки «Собрано» / «Упаковано»: одна позиция или вся группа товара сразу. */
+app.put<{ Params: { shopId: string }; Body: { marks?: { orderCode?: unknown; sku?: unknown; collected?: unknown; packed?: unknown }[] } }>(
+  '/shops/:shopId/picking/marks',
+  async (request, reply) => {
+    const { shopId } = request.params;
+    const marks = Array.isArray(request.body?.marks) ? request.body.marks : [];
+    const valid = marks.filter((m) => typeof m.orderCode === 'string' && typeof m.sku === 'string');
+    if (valid.length === 0) return reply.code(400).send({ error: 'marks are required' });
+    const flags = (m: (typeof valid)[number]) => ({
+      ...(typeof m.collected === 'boolean' && { collected: m.collected }),
+      ...(typeof m.packed === 'boolean' && { packed: m.packed }),
+    });
+    await prisma.$transaction(
+      valid.map((m) =>
+        prisma.pickingMark.upsert({
+          where: { shopId_orderCode_sku: { shopId, orderCode: m.orderCode as string, sku: m.sku as string } },
+          create: { shopId, orderCode: m.orderCode as string, sku: m.sku as string, ...flags(m) },
+          update: flags(m),
+        }),
+      ),
+    );
+    return { updated: valid.length };
+  },
+);
+
+/** Накладная одного заказа — для печати прямо с экрана «Сборка». */
+app.get<{ Params: { shopId: string; code: string } }>('/shops/:shopId/orders/:code/waybill', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const order = await prisma.order.findUnique({ where: { shopId_code: { shopId: shop.id, code: request.params.code } } });
+  if (!order?.waybillUrl) return reply.code(404).send({ error: 'У заказа нет накладной' });
+  const pdf = await new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey())).downloadWaybill(order.waybillUrl);
+  return reply
+    .type('application/pdf')
+    .header('Content-Disposition', `inline; filename="waybill-${order.code}.pdf"`)
+    .send(Buffer.from(pdf));
+});
+
 app.post<{ Params: { shopId: string }; Body: PrintBody }>(
   '/shops/:shopId/waybills',
   async (request, reply) => {
@@ -756,7 +1225,8 @@ app.post<{ Params: { batchId: string }; Body: { layout?: WaybillLayout } }>(
 
 app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybill-batches', async (request) =>
   prisma.waybillBatch.findMany({
-    where: { shopId: request.params.shopId },
+    // Склейки хранятся сутки (воркер удаляет старые раз в час)
+    where: { shopId: request.params.shopId, createdAt: { gte: new Date(Date.now() - DAY_MS) } },
     orderBy: { createdAt: 'desc' },
     take: 30,
     select: { id: true, layout: true, count: true, createdAt: true },
@@ -847,10 +1317,13 @@ app.get<{ Params: { shopId: string }; Querystring: { archived?: string } }>('/sh
     else if (entry.at === log.capturedAt.getTime()) entry.prices.push(log.price);
   }
 
-  // Для «Мин. +5%»: удержания магазина и комиссия категории (у товара или по его продажам);
+  // Для «Мин. цены» по вариантам наценки: удержания магазина и комиссия категории (у товара или по его продажам);
   // доставка — по тарифу Kaspi от самой цены (см. minProfitablePrice)
   const [shop, commissions, soldCategories] = await Promise.all([
-    prisma.shop.findUniqueOrThrow({ where: { id: shopId }, select: { commissionVatPercent: true, paymentFeePercent: true } }),
+    prisma.shop.findUniqueOrThrow({
+      where: { id: shopId },
+      select: { commissionVatPercent: true, paymentFeePercent: true, taxPercent: true, customExpenses: true, markupPercents: true },
+    }),
     prisma.categoryCommission.findMany(),
     prisma.orderItem.findMany({
       where: { productId: { in: products.map((p) => p.id) }, category: { not: null } },
@@ -860,25 +1333,33 @@ app.get<{ Params: { shopId: string }; Querystring: { archived?: string } }>('/sh
   ]);
   const percentByCategory = new Map(commissions.map((c) => [c.category, Number(c.percent)]));
   const soldCategory = new Map(soldCategories.map((i) => [i.productId!, i.category!]));
-  const minPrice = (p: (typeof products)[number]) => {
+  const markups = [...shop.markupPercents].sort((a, b) => a - b);
+  const minPrices = (p: (typeof products)[number]) => {
     const commission = percentByCategory.get(p.category ?? '') ?? percentByCategory.get(soldCategory.get(p.id) ?? '');
-    if (p.costPrice == null || commission === undefined) return null;
-    return minProfitablePrice({
-      costPrice: p.costPrice,
-      commissionPercent: commission,
-      commissionVatPercent: Number(shop.commissionVatPercent),
-      paymentFeePercent: Number(shop.paymentFeePercent),
-      weightKg: p.weightKg,
+    if (p.costPrice == null || commission === undefined) return [];
+    return markups.map((percent) => {
+      const min = minProfitablePrice({
+        costPrice: p.costPrice!,
+        commissionPercent: commission,
+        commissionVatPercent: Number(shop.commissionVatPercent),
+        paymentFeePercent: Number(shop.paymentFeePercent),
+        taxPercent: Number(shop.taxPercent) + customExpensesPercent(parseCustomExpenses(shop.customExpenses)),
+        margin: percent / 100,
+        weightKg: p.weightKg,
+      });
+      return { percent, price: min?.price ?? null, delivery: min?.delivery ?? null };
     });
   };
 
   return products.map((p) => {
     const competitors = latest.get(p.id)?.prices;
-    const min = minPrice(p);
+    const variants = minPrices(p);
     return {
       ...p,
-      minProfitablePrice: min?.price ?? null,
-      minPriceDelivery: min?.delivery ?? null,
+      // Наименьший вариант наценки — порог, ниже которого мин. цена робота подсвечивается
+      minProfitablePrice: variants[0]?.price ?? null,
+      minPriceDelivery: variants[0]?.delivery ?? null,
+      minPrices: variants,
       // Место: 1 + число конкурентов дешевле нас; при равной цене считаем, что мы не ниже их
       position: competitors ? 1 + competitors.filter((price) => price < p.price).length : null,
       topCompetitorPrice: competitors?.length ? Math.min(...competitors) : null,
@@ -906,7 +1387,12 @@ app.patch<{ Params: { productId: string }; Body: { costPrice?: number | null; pr
     if (preorderDays !== undefined && preorderDays !== null && !(Number.isInteger(preorderDays) && preorderDays >= 1 && preorderDays <= 30)) {
       return reply.code(400).send({ error: 'Предзаказ — от 1 до 30 дней (больше Kaspi не принимает).' });
     }
-    const before = await prisma.product.findUniqueOrThrow({ where: { id: request.params.productId }, select: { preorderDays: true } });
+    const before = await prisma.product.findUniqueOrThrow({ where: { id: request.params.productId }, select: { preorderDays: true, shopId: true } });
+    if (preorderDays != null && before.preorderDays == null) {
+      const access = await accessForShop(before.shopId);
+      const used = await prisma.product.count({ where: { preorderDays: { not: null }, shop: { ownerId: access.ownerId } } });
+      if (used >= access.maxPreorderProducts) return reply.code(402).send({ error: preorderLimitError(access.maxPreorderProducts), code: 'limit' });
+    }
     const product = await prisma.product.update({
       where: { id: request.params.productId },
       data: {
@@ -978,6 +1464,12 @@ app.put<{ Params: { productId: string }; Body: RepricerPatch }>(
     }
 
     const data = { enabled: body.enabled ?? existing?.enabled ?? false, floorPrice, ceilingPrice, step, checkIntervalSec };
+    if (data.enabled && !existing?.enabled) {
+      const product = await prisma.product.findUniqueOrThrow({ where: { id: productId }, select: { shopId: true } });
+      const access = await accessForShop(product.shopId);
+      const used = await prisma.repricerSetting.count({ where: { enabled: true, product: { shop: { ownerId: access.ownerId } } } });
+      if (used >= access.maxRobotProducts) return reply.code(402).send({ error: robotLimitError(access.maxRobotProducts), code: 'limit' });
+    }
     return prisma.repricerSetting.upsert({ where: { productId }, create: { productId, ...data }, update: data });
   },
 );
@@ -1132,6 +1624,9 @@ app.patch<{
   }
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
+  if (turningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
+    return reply.code(402).send({ error: 'Отзывы не входят в тариф «Старт». Подключите их на вкладке «Тарифы».', code: 'limit' });
+  }
   return prisma.shop.update({
     where: { id: shop.id },
     data: {
@@ -1181,11 +1676,37 @@ app.post<{ Params: { shopId: string }; Body: { productIds?: unknown; action?: Bu
     const products = await prisma.product.findMany({ where: { shopId, id: { in: ids } }, include: { repricerSetting: true } });
     let updated = 0;
     const skipped: string[] = [];
+    let robotSlots = Infinity;
+    let robotMax = Infinity;
+    if (action === 'enable') {
+      const access = await accessForShop(shopId);
+      const used = await prisma.repricerSetting.count({ where: { enabled: true, product: { shop: { ownerId: access.ownerId } } } });
+      robotMax = access.maxRobotProducts;
+      robotSlots = robotMax - used;
+    }
+    let preorderSlots = Infinity;
+    let preorderMax = Infinity;
+    if (action === 'preorder' && value !== null) {
+      const access = await accessForShop(shopId);
+      const used = await prisma.product.count({ where: { preorderDays: { not: null }, shop: { ownerId: access.ownerId } } });
+      preorderMax = access.maxPreorderProducts;
+      preorderSlots = preorderMax - used;
+    }
+    let limitHit = false;
+    let preorderLimitHit = false;
     for (const p of products) {
       const s = p.repricerSetting;
       const setting = (data: { enabled?: boolean; step?: number; ceilingPrice?: number | null }) =>
         prisma.repricerSetting.update({ where: { productId: p.id }, data });
 
+      if (action === 'preorder' && value !== null && p.preorderDays == null) {
+        if (preorderSlots <= 0) {
+          preorderLimitHit = true;
+          skipped.push(p.name);
+          continue;
+        }
+        preorderSlots--;
+      }
       if (action === 'preorder' || action === 'cost') {
         await prisma.product.update({ where: { id: p.id }, data: action === 'preorder' ? { preorderDays: value } : { costPrice: value } });
       } else if (action === 'floor') {
@@ -1207,6 +1728,12 @@ app.post<{ Params: { shopId: string }; Body: { productIds?: unknown; action?: Bu
         continue;
       } else if (action === 'enable') {
         if (s.enabled) continue;
+        if (robotSlots <= 0) {
+          limitHit = true;
+          skipped.push(p.name);
+          continue;
+        }
+        robotSlots--;
         await setting({ enabled: true });
       } else {
         await setting(action === 'step' ? { step: value! } : { ceilingPrice: value });
@@ -1214,7 +1741,290 @@ app.post<{ Params: { shopId: string }; Body: { productIds?: unknown; action?: Bu
       updated++;
     }
     if (action === 'preorder') await applyPreordersNow();
-    return { updated, skipped };
+    return {
+      updated,
+      skipped,
+      ...(limitHit && { limit: robotLimitError(robotMax) }),
+      ...(preorderLimitHit && { limit: preorderLimitError(preorderMax) }),
+    };
+  },
+);
+
+// ---------- Wildberries: отчёт о реализации, себестоимость ----------
+// Кабинет WB привязан к владельцу магазинов; раздел открывается из любого его магазина
+
+async function wbOwner(shopId: string) {
+  const shop = await prisma.shop.findUnique({ where: { id: shopId }, select: { ownerId: true } });
+  return shop?.ownerId ?? null;
+}
+
+async function startWbSync(accountId: string) {
+  await wbQueue.add('wb-sync', { accountId }, { jobId: `wb-${accountId}-${Date.now()}`, removeOnComplete: 20, removeOnFail: 20 });
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** Кабинет WB владельца магазина или ответ 404. */
+async function wbAccountFor(shopId: string) {
+  const ownerId = await wbOwner(shopId);
+  return ownerId ? prisma.wbAccount.findUnique({ where: { ownerId } }) : null;
+}
+
+const bigintOrNull = (v: string) => (/^\d+$/.test(v) ? BigInt(v) : null);
+
+/** Строки отчётов в формат расчёта. */
+const toWbRows = (rows: Awaited<ReturnType<typeof prisma.wbReportRow.findMany>>) =>
+  rows.map((r) => ({ ...r, nmId: r.nmId === null ? null : String(r.nmId) }));
+
+/** Период отчёта из файла: неделя (пн–вс) самой частой даты продажи. */
+function weekOf(dates: Date[]): { from: Date; to: Date } | null {
+  if (dates.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const d of dates) counts.set(d.toISOString().slice(0, 10), (counts.get(d.toISOString().slice(0, 10)) ?? 0) + 1);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+  const day = new Date(`${top}T00:00:00Z`);
+  const monday = new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * DAY);
+  return { from: monday, to: new Date(monday.getTime() + 6 * DAY) };
+}
+
+/** Состояние WB: подключён ли токен, налог, когда обновлялось. */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/wb', async (request, reply) => {
+  if (!(await wbOwner(request.params.shopId))) return reply.code(404).send({ error: 'shop not found' });
+  const account = await wbAccountFor(request.params.shopId);
+  if (!account) return { connected: false, hasToken: false };
+  return {
+    connected: true,
+    hasToken: account.tokenEnc !== '',
+    syncedAt: account.syncedAt,
+    syncError: account.syncError,
+    taxPercent: Number(account.taxPercent),
+  };
+});
+
+/** Список отчётов с итогами — для страницы «Отчёты». */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/wb/reports', async (request, reply) => {
+  const account = await wbAccountFor(request.params.shopId);
+  if (!account) return [];
+  const [reports, rows, products] = await Promise.all([
+    prisma.wbReport.findMany({ where: { accountId: account.id }, orderBy: [{ dateFrom: 'desc' }, { reportId: 'desc' }] }),
+    prisma.wbReportRow.findMany({ where: { accountId: account.id } }),
+    prisma.wbProduct.findMany({ where: { accountId: account.id, costPrice: { not: null } } }),
+  ]);
+  const costByNm = new Map(products.map((p) => [String(p.nmId), p.costPrice!]));
+  const byReport = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = String(r.realizationreportId);
+    byReport.set(key, [...(byReport.get(key) ?? []), r]);
+  }
+  return reports.map((rep) => {
+    const { totals } = buildWbReport(toWbRows(byReport.get(String(rep.reportId)) ?? []), costByNm, Number(account.taxPercent));
+    return {
+      reportId: String(rep.reportId),
+      dateFrom: rep.dateFrom,
+      dateTo: rep.dateTo,
+      source: rep.source,
+      fileName: rep.fileName,
+      uploadedAt: rep.uploadedAt,
+      totals,
+    };
+  });
+});
+
+/** Отчёт или сводный отчёт по нескольким неделям: ?ids=1,2,3. */
+app.get<{ Params: { shopId: string }; Querystring: { ids?: string } }>('/shops/:shopId/wb/report', async (request, reply) => {
+  const account = await wbAccountFor(request.params.shopId);
+  if (!account) return reply.code(404).send({ error: 'Wildberries не подключён' });
+  const ids = (request.query.ids ?? '').split(',').map((s) => bigintOrNull(s.trim())).filter((v): v is bigint => v !== null);
+  if (ids.length === 0) return reply.code(400).send({ error: 'Выберите отчёты' });
+
+  const [reports, rows, products] = await Promise.all([
+    prisma.wbReport.findMany({ where: { accountId: account.id, reportId: { in: ids } }, orderBy: { dateFrom: 'asc' } }),
+    prisma.wbReportRow.findMany({ where: { accountId: account.id, realizationreportId: { in: ids } } }),
+    prisma.wbProduct.findMany({ where: { accountId: account.id } }),
+  ]);
+  const costByNm = new Map(products.filter((p) => p.costPrice !== null).map((p) => [String(p.nmId), p.costPrice!]));
+  const productByNm = new Map(products.map((p) => [String(p.nmId), p]));
+  const wbRows = toWbRows(rows);
+  const report = buildWbReport(wbRows, costByNm, Number(account.taxPercent));
+  const dates = reports.flatMap((r) => [r.dateFrom, r.dateTo]).filter((d): d is Date => d !== null);
+  return {
+    reports: reports.map((r) => ({ reportId: String(r.reportId), dateFrom: r.dateFrom, dateTo: r.dateTo, source: r.source })),
+    dateFrom: dates.length ? new Date(Math.min(...dates.map(Number))) : null,
+    dateTo: dates.length ? new Date(Math.max(...dates.map(Number))) : null,
+    taxPercent: Number(account.taxPercent),
+    currency: rows.find((r) => r.currency)?.currency ?? 'KZT',
+    totals: report.totals,
+    byProduct: report.byProduct.map((p) => {
+      const product = productByNm.get(p.nmId);
+      return { ...p, title: product?.title ?? p.title, saName: product?.saName ?? p.saName };
+    }),
+    ...buildWbBreakdowns(wbRows),
+  };
+});
+
+/**
+ * Загрузка детализации отчёта из кабинета WB (zip или xlsx, в base64). Отчёт с тем же
+ * номером заменяется целиком — в том числе пришедший через API.
+ */
+app.post<{ Params: { shopId: string }; Body: { fileName?: string; data?: string } }>(
+  '/shops/:shopId/wb/reports/upload',
+  { bodyLimit: 60 * 1024 * 1024 },
+  async (request, reply) => {
+    const ownerId = await wbOwner(request.params.shopId);
+    if (!ownerId) return reply.code(404).send({ error: 'shop not found' });
+    const fileName = trimmed(request.body?.fileName) || 'report.zip';
+    const data = typeof request.body?.data === 'string' ? request.body.data : '';
+    if (!data) return reply.code(400).send({ error: 'Файл пустой.' });
+
+    let parsed;
+    try {
+      parsed = parseWbReportFile(new Uint8Array(Buffer.from(data, 'base64')), fileName);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : 'Не удалось прочитать файл.' });
+    }
+    // Загрузка файлом работает и без токена API
+    const account = await prisma.wbAccount.upsert({ where: { ownerId }, create: { ownerId, tokenEnc: '' }, update: {} });
+
+    const result = [];
+    for (const report of parsed) {
+      if (!report.reportId) return reply.code(400).send({ error: `Не нашёл номер отчёта в имени файла «${report.fileName}». Загрузите файл с исходным именем из кабинета WB.` });
+      const reportId = BigInt(report.reportId);
+      const existing = await prisma.wbReport.findUnique({ where: { accountId_reportId: { accountId: account.id, reportId } } });
+      const week = existing?.dateFrom ? { from: existing.dateFrom, to: existing.dateTo! } : weekOf(report.rows.filter((r) => r.quantity !== 0 && r.saleDate).map((r) => r.saleDate!));
+      await prisma.$transaction([
+        prisma.wbReportRow.deleteMany({ where: { accountId: account.id, realizationreportId: reportId } }),
+        prisma.wbReportRow.createMany({
+          data: report.rows.map(({ rowNo, nmId, ...r }) => ({
+            ...r,
+            nmId: nmId && /^\d+$/.test(nmId) ? BigInt(nmId) : null,
+            accountId: account.id,
+            // Строкам файла — свой номер, не пересекающийся с номерами строк API
+            rrdId: -(reportId * 100_000n + BigInt(rowNo)),
+            realizationreportId: reportId,
+            currency: 'KZT',
+          })),
+        }),
+        prisma.wbReport.upsert({
+          where: { accountId_reportId: { accountId: account.id, reportId } },
+          create: { accountId: account.id, reportId, source: 'file', fileName, rowsCount: report.rows.length, dateFrom: week?.from, dateTo: week?.to },
+          update: { source: 'file', fileName, rowsCount: report.rows.length, uploadedAt: new Date(), dateFrom: week?.from, dateTo: week?.to },
+        }),
+      ]);
+      // Товары из отчёта: в файле есть настоящие названия — обновляем их
+      const items = new Map<string, { saName: string | null; title: string | null }>();
+      for (const r of report.rows) if (r.nmId && /^\d+$/.test(r.nmId)) items.set(r.nmId, { saName: r.saName, title: r.title ?? r.subject });
+      for (const [nm, p] of items) {
+        await prisma.wbProduct.upsert({
+          where: { accountId_nmId: { accountId: account.id, nmId: BigInt(nm) } },
+          create: { accountId: account.id, nmId: BigInt(nm), ...p },
+          update: { ...(p.saName && { saName: p.saName }), ...(p.title && { title: p.title }) },
+        });
+      }
+      result.push({ reportId: report.reportId, rows: report.rows.length, dateFrom: week?.from ?? null, dateTo: week?.to ?? null });
+    }
+    return { reports: result };
+  },
+);
+
+/** Удалить отчёт (например, загруженный по ошибке). */
+app.delete<{ Params: { shopId: string; reportId: string } }>('/shops/:shopId/wb/reports/:reportId', async (request, reply) => {
+  const account = await wbAccountFor(request.params.shopId);
+  const reportId = bigintOrNull(request.params.reportId);
+  if (!account || reportId === null) return reply.code(404).send({ error: 'Отчёт не найден' });
+  await prisma.$transaction([
+    prisma.wbReportRow.deleteMany({ where: { accountId: account.id, realizationreportId: reportId } }),
+    prisma.wbReport.deleteMany({ where: { accountId: account.id, reportId } }),
+  ]);
+  return { ok: true };
+});
+
+/** Все товары WB: себестоимость и продажи за всё время. */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/wb/products', async (request) => {
+  const account = await wbAccountFor(request.params.shopId);
+  if (!account) return [];
+  const [products, rows] = await Promise.all([
+    prisma.wbProduct.findMany({ where: { accountId: account.id } }),
+    prisma.wbReportRow.findMany({ where: { accountId: account.id, nmId: { not: null } } }),
+  ]);
+  const { byProduct } = buildWbReport(toWbRows(rows), new Map(), 0);
+  const stats = new Map(byProduct.map((p) => [p.nmId, p]));
+  const lastSale = new Map<string, Date>();
+  for (const r of rows) {
+    if (r.docType !== 'Продажа' || r.quantity === 0 || !r.saleDate) continue;
+    const key = String(r.nmId);
+    if (!lastSale.has(key) || lastSale.get(key)! < r.saleDate) lastSale.set(key, r.saleDate);
+  }
+  return products
+    .map((p) => {
+      const s = stats.get(String(p.nmId));
+      return {
+        nmId: String(p.nmId),
+        saName: p.saName,
+        title: p.title,
+        costPrice: p.costPrice,
+        units: s?.units ?? 0,
+        revenue: s?.revenue ?? 0,
+        avgPrice: s && s.units > 0 ? Math.round(s.revenue / s.units) : null,
+        // Вся логистика товара (с возвратами и отменами) и вознаграждение WB на одну проданную штуку
+        deliveryPerUnit: s && s.units > 0 ? Math.round(s.delivery / s.units) : null,
+        commissionPerUnit: s && s.units > 0 ? Math.round(s.commission / s.units) : null,
+        lastSale: lastSale.get(String(p.nmId)) ?? null,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue);
+});
+
+app.put<{ Params: { shopId: string }; Body: { token?: string } }>('/shops/:shopId/wb/token', async (request, reply) => {
+  const ownerId = await wbOwner(request.params.shopId);
+  if (!ownerId) return reply.code(404).send({ error: 'shop not found' });
+  const token = trimmed(request.body?.token);
+  if (token.length < 20) return reply.code(400).send({ error: 'Вставьте токен API из кабинета WB целиком.' });
+  const tokenEnc = encryptSecret(token, encryptionKey());
+  const account = await prisma.wbAccount.upsert({
+    where: { ownerId },
+    create: { ownerId, tokenEnc },
+    update: { tokenEnc, syncError: null },
+  });
+  await startWbSync(account.id);
+  return { ok: true };
+});
+
+app.post<{ Params: { shopId: string } }>('/shops/:shopId/wb/sync', async (request, reply) => {
+  const ownerId = await wbOwner(request.params.shopId);
+  const account = ownerId ? await prisma.wbAccount.findUnique({ where: { ownerId } }) : null;
+  if (!account) return reply.code(404).send({ error: 'Wildberries не подключён' });
+  await startWbSync(account.id);
+  return { ok: true };
+});
+
+app.patch<{ Params: { shopId: string }; Body: { taxPercent?: number } }>('/shops/:shopId/wb/settings', async (request, reply) => {
+  const ownerId = await wbOwner(request.params.shopId);
+  const { taxPercent } = request.body ?? {};
+  if (taxPercent === undefined || !isPercent(taxPercent)) return reply.code(400).send({ error: 'Налог — процент от 0 до 100.' });
+  const account = ownerId ? await prisma.wbAccount.findUnique({ where: { ownerId } }) : null;
+  if (!account) return reply.code(404).send({ error: 'Wildberries не подключён' });
+  await prisma.wbAccount.update({ where: { id: account.id }, data: { taxPercent } });
+  return { ok: true };
+});
+
+app.put<{ Params: { shopId: string; nmId: string }; Body: { costPrice?: number | null } }>(
+  '/shops/:shopId/wb/products/:nmId/cost',
+  async (request, reply) => {
+    const ownerId = await wbOwner(request.params.shopId);
+    const account = ownerId ? await prisma.wbAccount.findUnique({ where: { ownerId } }) : null;
+    if (!account) return reply.code(404).send({ error: 'Wildberries не подключён' });
+    const { costPrice = null } = request.body ?? {};
+    if (costPrice !== null && !(typeof costPrice === 'number' && costPrice >= 0)) {
+      return reply.code(400).send({ error: 'Себестоимость — число не меньше нуля.' });
+    }
+    if (!/^\d+$/.test(request.params.nmId)) return reply.code(400).send({ error: 'nmId must be a number' });
+    const nmId = BigInt(request.params.nmId);
+    await prisma.wbProduct.upsert({
+      where: { accountId_nmId: { accountId: account.id, nmId } },
+      create: { accountId: account.id, nmId, costPrice },
+      update: { costPrice },
+    });
+    return { ok: true };
   },
 );
 
