@@ -12,17 +12,3 @@ sanq.kz {
 www.sanq.kz {
 	redir https://sanq.kz{uri} permanent
 }
-
-# Старый вход по IP с общим паролем — пока читатель цен на компьютере продавца
-# не переведён на https://sanq.kz. Потом этот блок можно убрать.
-:80 {
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
-	handle_path /api/* {
-		reverse_proxy api:4000
-	}
-	handle {
-		reverse_proxy web:3000
-	}
-}

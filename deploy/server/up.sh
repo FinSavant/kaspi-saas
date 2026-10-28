@@ -7,6 +7,9 @@ COMPOSE=(docker compose --env-file .env.server -f deploy/server/docker-compose.y
 
 "${COMPOSE[@]}" build migrate
 "${COMPOSE[@]}" up -d postgres redis migrate api web caddy
+# Caddyfile смонтирован файлом: после распаковки нового кода Caddy видит старую копию,
+# поэтому его перезапускаем (сертификаты хранятся в томе caddydata и не теряются)
+"${COMPOSE[@]}" restart caddy
 # Если воркер уже работает — перезапустить его на новом коде
 if [ -n "$("${COMPOSE[@]}" --profile worker ps -q worker 2>/dev/null)" ]; then
   "${COMPOSE[@]}" --profile worker up -d worker

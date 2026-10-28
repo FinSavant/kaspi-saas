@@ -26,7 +26,7 @@ try {
   Step '2/4 Загрузка кода' @('scp', '-i', $key, '-o', 'BatchMode=yes', $archive, "${hostName}:/tmp/sanq-deploy.tgz")
 
   Step '3/4 Распаковка и настройки SANQ' @('ssh', '-i', $key, '-o', 'BatchMode=yes', $hostName,
-    "cd /opt/kaspi-saas && tar -xzf /tmp/sanq-deploy.tgz && (grep -q '^SANQ_WHATSAPP=' .env.server || echo 'SANQ_WHATSAPP=77064040416' >> .env.server) && (grep -q '^SANQ_ADMIN_EMAIL=' .env.server || echo 'SANQ_ADMIN_EMAIL=alishermahkamov.kz@gmail.com' >> .env.server) && (grep -q '^COOKIE_SECURE=' .env.server || echo 'COOKIE_SECURE=0' >> .env.server) && echo ok")
+    "cd /opt/kaspi-saas && tar -xzf /tmp/sanq-deploy.tgz && (grep -q '^SANQ_WHATSAPP=' .env.server || echo 'SANQ_WHATSAPP=77064040416' >> .env.server) && (grep -q '^SANQ_ADMIN_EMAIL=' .env.server || echo 'SANQ_ADMIN_EMAIL=alishermahkamov.kz@gmail.com' >> .env.server) && sed -i '/^COOKIE_SECURE=/d' .env.server && echo ok")
 
   Step '4/4 Обновление базы и перезапуск (несколько минут)' @('ssh', '-i', $key, '-o', 'BatchMode=yes', $hostName,
     'cd /opt/kaspi-saas && bash deploy/server/up.sh')

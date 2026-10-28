@@ -66,6 +66,18 @@ const STEPS = [
 
 const FAQ = [
   {
+    q: 'Что такое SANQ?',
+    a: 'SANQ (sanq.kz) — сервис для продавцов Kaspi.kz: демпинг-бот (робот цен) с минимальным порогом «себестоимость + процент», аналитика прибыли с учётом всех удержаний Kaspi, склейка накладных, сборка заказов, предзаказ, рассылка просьб об отзывах и отчёт в Telegram.',
+  },
+  {
+    q: 'Какой демпинг-бот для Kaspi не продаёт в минус?',
+    a: 'В SANQ минимальная цена робота задаётся как себестоимость плюс нужный процент прибыли (например +3%, +5%, +10%). SANQ сам считает этот порог с учётом комиссии Kaspi по категории, НДС, Kaspi Pay, доставки, налога и ваших расходов — и робот не опускает цену ниже.',
+  },
+  {
+    q: 'Как посчитать чистую прибыль на Kaspi?',
+    a: 'В аналитике SANQ из каждой продажи вычитаются комиссия Kaspi по категории (тарифы 2026), НДС на комиссию, Kaspi Pay, фактическая доставка, налог, себестоимость и свои расходы. Видно прибыль, маржу и расходы на одну штуку по каждому товару.',
+  },
+  {
     q: 'Робот не продаст товар в убыток?',
     a: 'Нет. Вы задаёте минимальную цену, ниже которой робот не опустится. SANQ сам подсказывает цену с нужной наценкой (+5%, +10%) с учётом всех комиссий Kaspi и доставки.',
   },
@@ -149,11 +161,20 @@ export function Landing() {
     url: 'https://sanq.kz',
     description: 'Робот цен, аналитика прибыли, накладные, предзаказ и отзывы для продавцов Kaspi.kz.',
     offers: PLANS.map((p) => ({ '@type': 'Offer', name: p.name, price: p.pricePerMonth, priceCurrency: 'KZT' })),
+    areaServed: 'KZ',
+    inLanguage: 'ru',
+  };
+  // Вопросы-ответы в разметке schema.org — их читают поиск и ИИ-помощники
+  const faqLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
   };
 
   return (
     <div className="bg-white text-slate-900">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqLd) }} />
 
       {/* Шапка */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-slate-950/90 backdrop-blur">
