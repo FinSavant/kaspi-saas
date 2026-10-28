@@ -42,6 +42,7 @@ ${plans}
 ## Ссылки
 
 - Сайт: https://sanq.kz
+- Страница на казахском: https://sanq.kz/kz
 - Регистрация: https://sanq.kz/register
 `;
   return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });

@@ -3,24 +3,20 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Landing } from '@/components/Landing';
+import { LANDING_TEXT } from '@/lib/landing-text';
 import { api } from '@/lib/api';
 import { SESSION_COOKIE } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
+const ru = LANDING_TEXT.ru;
+
 export const metadata: Metadata = {
-  title: 'SANQ — робот цен, аналитика и накладные для продавцов Kaspi',
-  description:
-    'Сервис для продавцов Kaspi.kz: робот цен держит товар на первом месте, точная прибыль с учётом всех комиссий, накладные в один клик, предзаказ, отзывы и отчёт в Telegram. 3 дня бесплатно.',
-  alternates: { canonical: 'https://sanq.kz' },
-  openGraph: {
-    title: 'SANQ — сервис для продавцов Kaspi',
-    description: 'Робот цен, аналитика прибыли, накладные, предзаказ и отзывы. 3 дня бесплатно.',
-    url: 'https://sanq.kz',
-    siteName: 'SANQ',
-    locale: 'ru_KZ',
-    type: 'website',
-  },
+  title: ru.meta.title,
+  description: ru.meta.description,
+  // Русская и казахская версии ссылаются друг на друга — Google показывает нужную по языку поиска
+  alternates: { canonical: 'https://sanq.kz', languages: { ru: 'https://sanq.kz', kk: 'https://sanq.kz/kz', 'x-default': 'https://sanq.kz' } },
+  openGraph: { title: ru.meta.ogTitle, description: ru.meta.ogDescription, url: 'https://sanq.kz', siteName: 'SANQ', locale: 'ru_KZ', type: 'website' },
 };
 
 interface Shop {

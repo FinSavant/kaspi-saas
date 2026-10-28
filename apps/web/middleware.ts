@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from './lib/session';
 
 // Открыты без входа: страница о сервисе, вход, регистрация и файлы для поисковиков
-const PUBLIC_PATHS = ['/', '/login', '/register', '/robots.txt', '/sitemap.xml', '/llms.txt'];
+const PUBLIC_PATHS = ['/', '/kz', '/login', '/register', '/robots.txt', '/sitemap.xml', '/llms.txt'];
 
 /** Без куки сессии — на страницу входа. Действительность сессии проверяет api. */
 export function middleware(request: NextRequest) {
