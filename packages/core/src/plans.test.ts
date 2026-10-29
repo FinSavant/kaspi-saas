@@ -23,9 +23,10 @@ describe('plans', () => {
     expect(ownerAccess({ isAdmin: false, subscription: sub('analytics') }, NOW).features).toEqual(['analytics']);
   });
 
-  it('adds reviews to «Старт» only with the add-on', () => {
-    expect(ownerAccess({ isAdmin: false, subscription: sub('start') }, NOW).features).not.toContain('reviews');
-    expect(ownerAccess({ isAdmin: false, subscription: sub('start', { reviewsAddon: true }) }, NOW).features).toContain('reviews');
+  it('includes reviews in «Старт» and closes them on «Только аналитика»', () => {
+    expect(ownerAccess({ isAdmin: false, subscription: sub('start') }, NOW)).toMatchObject({ reviewsAllowed: true });
+    expect(ownerAccess({ isAdmin: false, subscription: sub('start') }, NOW).features).toContain('reviews');
+    expect(ownerAccess({ isAdmin: false, subscription: sub('analytics') }, NOW).reviewsAllowed).toBe(false);
   });
 
   it('limits preorder by plan and opens everything during the trial', () => {

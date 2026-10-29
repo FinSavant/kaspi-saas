@@ -79,23 +79,6 @@ export default async function BillingPage({ params }: { params: Promise<{ shopId
 
       <PlanCards b={b} />
 
-      {current.id === 'start' && !b.reviewsAddon && b.whatsapp && (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5">
-          <div>
-            <h2 className="font-semibold">Отзывы к тарифу «Старт»</h2>
-            <p className="text-sm text-slate-500">Робот сам пишет покупателям и просит оставить отзыв. {money(b.reviewsAddonPrice)} в месяц.</p>
-          </div>
-          <a
-            href={whatsappLink(b.whatsapp, `Здравствуйте! Хочу подключить отзывы к тарифу SANQ «Старт» (${money(b.reviewsAddonPrice)} в месяц).`)!}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Подключить отзывы
-          </a>
-        </section>
-      )}
-
       <p className="text-sm text-slate-500">
         Новый аккаунт получает {b.trialDays} дня бесплатно со всеми функциями. Оплата помесячно, переводом; после оплаты доступ продлевается
         вручную в течение дня.

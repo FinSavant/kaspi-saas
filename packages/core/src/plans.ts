@@ -32,8 +32,9 @@ export const PLANS: Plan[] = [
     maxShops: 1,
     maxRobotProducts: 50,
     maxPreorderProducts: 50,
-    features: ['products', 'waybills', 'picking', 'robot', 'analytics'],
-    reviewsIncluded: false,
+    // Отзывы входят и в «Старт» (раньше были доплатой REVIEWS_ADDON_PRICE)
+    features: ALL_FEATURES,
+    reviewsIncluded: true,
   },
   {
     id: 'pro',
