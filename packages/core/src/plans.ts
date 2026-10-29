@@ -28,7 +28,7 @@ export const PLANS: Plan[] = [
   {
     id: 'start',
     name: 'Старт',
-    pricePerMonth: 10_900,
+    pricePerMonth: 9_900,
     maxShops: 1,
     maxRobotProducts: 50,
     maxPreorderProducts: 50,
