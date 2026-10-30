@@ -11,3 +11,4 @@ dist
 # Журнал выкладки и архивы
 deploy-sanq.log
 *.tgz
+price-reader.log
