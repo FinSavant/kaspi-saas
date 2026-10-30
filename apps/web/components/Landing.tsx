@@ -1,4 +1,4 @@
-import { PLANS, REVIEWS_ADDON_PRICE, TRIAL_DAYS, type Plan } from '@kaspi/core/plans';
+import { PLANS, TRIAL_DAYS, type Plan } from '@kaspi/core/plans';
 import Link from 'next/link';
 import { LANDING_TEXT, LANDING_URL, type Lang, type LandingText } from '@/lib/landing-text';
 import { LandingShowcase } from './LandingShowcase';
@@ -24,8 +24,8 @@ function planLines(p: Plan, t: LandingText): string[] {
     pr.shops(p.maxShops),
     pr.robot(p.maxRobotProducts),
     pr.preorder(p.maxPreorderProducts),
-    pr.base,
-    p.reviewsIncluded ? pr.reviewsIncluded : pr.reviewsAddon(REVIEWS_ADDON_PRICE),
+    ...pr.base,
+    ...(p.reviewsIncluded ? [pr.reviewsIncluded] : []),
   ];
 }
 

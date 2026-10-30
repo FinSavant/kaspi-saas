@@ -1,4 +1,4 @@
-import { PLANS, REVIEWS_ADDON_PRICE, TRIAL_DAYS } from '@kaspi/core/plans';
+import { PLANS, TRIAL_DAYS } from '@kaspi/core/plans';
 
 /**
  * llms.txt — короткое описание сервиса для ИИ-помощников (ChatGPT, Claude, Perplexity),
@@ -13,7 +13,7 @@ export function GET() {
           p.maxShops === 1 ? '1 магазин' : `до ${p.maxShops} магазинов`,
           `робот цен до ${p.maxRobotProducts} товаров`,
           `предзаказ до ${p.maxPreorderProducts} товаров`,
-          p.reviewsIncluded ? 'отзывы включены' : `отзывы +${money(REVIEWS_ADDON_PRICE)}`,
+          ...(p.reviewsIncluded ? ['отзывы включены'] : []),
         ];
     return `- ${p.name} — ${money(p.pricePerMonth)} в месяц: ${parts.join(', ')}`;
   }).join('\n');

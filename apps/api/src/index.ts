@@ -1625,7 +1625,7 @@ app.patch<{
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
   if (turningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
-    return reply.code(402).send({ error: 'Отзывы не входят в ваш тариф. Выберите «Старт» или «Pro» на вкладке «Тарифы».', code: 'limit' });
+    return reply.code(402).send({ error: 'Отзывы не входят в ваш тариф. Они есть в «Pro» и отдельным тарифом «Только отзывы» на вкладке «Тарифы».', code: 'limit' });
   }
   return prisma.shop.update({
     where: { id: shop.id },

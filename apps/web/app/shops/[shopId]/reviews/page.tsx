@@ -99,7 +99,7 @@ export default async function ReviewsPage({
       {!billing.reviewsAllowed && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span>
-            Отзывы не входят в ваш тариф: рассылка не работает. Они есть в тарифах «Старт», «Pro» и «Только отзывы».
+            Отзывы не входят в ваш тариф: рассылка не работает. Они есть в «Pro» и отдельным тарифом «Только отзывы».
           </span>
           <Link href={`/shops/${shopId}/billing`} className="rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700">
             Подключить отзывы

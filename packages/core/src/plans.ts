@@ -32,9 +32,9 @@ export const PLANS: Plan[] = [
     maxShops: 1,
     maxRobotProducts: 50,
     maxPreorderProducts: 50,
-    // Отзывы входят и в «Старт» (раньше были доплатой REVIEWS_ADDON_PRICE)
-    features: ALL_FEATURES,
-    reviewsIncluded: true,
+    // Отзывы — отдельный блок: тариф «Только отзывы» или доплата к «Старту» (reviewsAddon)
+    features: ['products', 'waybills', 'picking', 'robot', 'analytics'],
+    reviewsIncluded: false,
   },
   {
     id: 'pro',
@@ -70,7 +70,7 @@ export const PLANS: Plan[] = [
   },
 ];
 
-export const REVIEWS_ADDON_PRICE = 7_000;
+export const REVIEWS_ADDON_PRICE = 5_990;
 export const TRIAL_DAYS = 3;
 
 export function getPlan(id: string): Plan {

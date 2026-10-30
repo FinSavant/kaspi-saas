@@ -40,7 +40,7 @@ export function whatsappLink(number: string | null, text: string): string | null
 }
 
 /** Что входит в тариф — строки карточки. */
-function planLines(p: Plan, reviewsAddonPrice: number): string[] {
+function planLines(p: Plan): string[] {
   if (p.single) {
     return p.features.includes('reviews')
       ? ['✓ 1 магазин', '✓ Отзывы: робот пишет покупателям и просит отзыв', '✓ Шаблоны сообщений и время рассылки']
@@ -50,8 +50,10 @@ function planLines(p: Plan, reviewsAddonPrice: number): string[] {
     `✓ ${p.maxShops === 1 ? '1 магазин' : `До ${p.maxShops} магазинов`}`,
     `✓ Робот цен до ${p.maxRobotProducts} товаров`,
     `✓ Предзаказ до ${p.maxPreorderProducts} товаров`,
-    '✓ Накладные, сборка заказов, аналитика, товары',
-    p.reviewsIncluded ? '✓ Отзывы включены' : `＋ Отзывы отдельно: ${money(reviewsAddonPrice)} / месяц`,
+    '✓ Накладные, сборка',
+    '✓ Аналитика',
+    '✓ Telegram-отчёт',
+    ...(p.reviewsIncluded ? ['✓ Отзывы включены'] : []),
   ];
 }
 
@@ -69,7 +71,7 @@ function PlanCard({ p, b }: { p: Plan; b: Billing }) {
         <span className="text-sm font-normal text-slate-500"> / месяц</span>
       </div>
       <ul className="mt-4 flex-1 space-y-2 text-sm text-slate-700">
-        {planLines(p, b.reviewsAddonPrice).map((line) => (
+        {planLines(p).map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
