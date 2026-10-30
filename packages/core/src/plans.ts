@@ -49,7 +49,7 @@ export const PLANS: Plan[] = [
   {
     id: 'reviews',
     name: 'Только отзывы',
-    pricePerMonth: 5_990,
+    pricePerMonth: 4_999,
     maxShops: 1,
     maxRobotProducts: 0,
     maxPreorderProducts: 0,
@@ -70,7 +70,7 @@ export const PLANS: Plan[] = [
   },
 ];
 
-export const REVIEWS_ADDON_PRICE = 5_990;
+export const REVIEWS_ADDON_PRICE = 4_999;
 export const TRIAL_DAYS = 3;
 
 export function getPlan(id: string): Plan {

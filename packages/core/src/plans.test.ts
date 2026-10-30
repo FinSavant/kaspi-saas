@@ -27,7 +27,7 @@ describe('plans', () => {
     expect(ownerAccess({ isAdmin: false, subscription: sub('start') }, NOW)).toMatchObject({ reviewsAllowed: false });
     expect(ownerAccess({ isAdmin: false, subscription: sub('start') }, NOW).features).not.toContain('reviews');
     expect(ownerAccess({ isAdmin: false, subscription: sub('start', { reviewsAddon: true }) }, NOW).features).toContain('reviews');
-    expect(subscriptionState(sub('start', { reviewsAddon: true }), NOW).monthlyPrice).toBe(9_900 + 5_990);
+    expect(subscriptionState(sub('start', { reviewsAddon: true }), NOW).monthlyPrice).toBe(9_900 + 4_999);
   });
 
   it('limits preorder by plan and opens everything during the trial', () => {
