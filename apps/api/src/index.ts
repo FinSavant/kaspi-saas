@@ -115,6 +115,9 @@ declare module 'fastify' {
 
 // Веб-кабинет передаёт токен сессии продавца; бот и читатель цен ходят без него
 const SESSION_HEADER = 'x-user-session';
+// Веб-кабинет помечает все свои запросы: без сессии ему открыты только /auth/*. Иначе вызов
+// server action с открытой страницы без входа выглядел бы как запрос своей службы
+const WEB_CLIENT_HEADER = 'x-web-client';
 // Разделы только для владельца платформы: админка, Wildberries, общие ставки комиссий, читатель цен
 const ADMIN_ONLY = [/^\/admin(\/|$)/, /^\/shops\/[^/]+\/(wb|wildberries)(\/|$)/, /^\/commissions\//, /^\/reader\//];
 
@@ -141,7 +144,10 @@ async function requestShopIds(path: string, params: Record<string, string | unde
 // Продавец видит только свои магазины; владелец платформы — все
 app.addHook('preHandler', async (request, reply) => {
   const token = request.headers[SESSION_HEADER];
-  if (typeof token !== 'string' || !token) return;
+  if (typeof token !== 'string' || !token) {
+    if (request.headers[WEB_CLIENT_HEADER] && !request.url.startsWith('/auth/')) return reply.code(401).send({ error: 'login required' });
+    return;
+  }
   const session = await prisma.session.findUnique({ where: { tokenHash: sessionTokenHash(token) }, include: { user: true } });
   if (!session || session.expiresAt < new Date()) return reply.code(401).send({ error: 'login required' });
   request.user = { id: session.userId, isAdmin: session.user.isAdmin };
@@ -208,10 +214,7 @@ function noteFailedLogin(email: string): void {
   else entry.count += 1;
 }
 
-/**
- * Регистрация продавца: аккаунт, пробный период и сессия. Email из SANQ_ADMIN_EMAIL
- * при первой регистрации получает аккаунт владельца платформы с его нынешними магазинами.
- */
+/** Регистрация продавца: аккаунт, пробный период и сессия. */
 app.post<{ Body: { email?: string; password?: string; name?: string } }>('/auth/register', async (request, reply) => {
   const email = normalizeEmail(String(request.body?.email ?? ''));
   const password = String(request.body?.password ?? '');
@@ -220,14 +223,8 @@ app.post<{ Body: { email?: string; password?: string; name?: string } }>('/auth/
   if (password.length < MIN_PASSWORD_LENGTH) return reply.code(400).send({ error: `Пароль — не короче ${MIN_PASSWORD_LENGTH} символов.` });
   if (await prisma.user.findUnique({ where: { email } })) return reply.code(409).send({ error: 'Этот email уже зарегистрирован. Войдите.' });
 
-  const adminEmail = normalizeEmail(process.env.SANQ_ADMIN_EMAIL ?? '');
-  const unclaimedAdmin = adminEmail && email === adminEmail ? await prisma.user.findFirst({ where: { isAdmin: true, email: null } }) : null;
-  const user = unclaimedAdmin
-    ? await prisma.user.update({
-        where: { id: unclaimedAdmin.id },
-        data: { email, passwordHash: hashPassword(password), name: name ?? unclaimedAdmin.name },
-      })
-    : await prisma.user.create({ data: { email, passwordHash: hashPassword(password), name } });
+  // Email не подтверждается, поэтому регистрация никогда не даёт доступа к существующему аккаунту
+  const user = await prisma.user.create({ data: { email, passwordHash: hashPassword(password), name } });
   await ownerSubscription(user.id);
   return startSession(user.id);
 });
@@ -791,7 +788,8 @@ app.post('/auth/telegram/start', async (_request, reply) => {
 
 /** Вызывает бот, когда продавец нажал «Подтвердить вход». Нового продавца регистрирует. */
 app.post<{ Body: { code?: string; chatId?: string; name?: string } }>('/auth/telegram/confirm', async (request, reply) => {
-  if (request.user) return reply.code(403).send({ error: 'forbidden' });
+  // Подтверждать вход может только бот, не веб-кабинет
+  if (request.user || request.headers[WEB_CLIENT_HEADER]) return reply.code(403).send({ error: 'forbidden' });
   const code = String(request.body?.code ?? '');
   const chatId = String(request.body?.chatId ?? '');
   const redis = await ordersSyncQueue.client;

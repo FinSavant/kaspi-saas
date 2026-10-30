@@ -1,7 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
-import { SESSION_COOKIE, SESSION_HEADER } from './session';
+import { SESSION_COOKIE, SESSION_HEADER, WEB_CLIENT_HEADER } from './session';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:4000';
 
@@ -19,7 +19,7 @@ export async function apiHeaders(): Promise<Record<string, string>> {
   const key = process.env.API_INTERNAL_KEY;
   if (!key) throw new ApiError(500, 'API_INTERNAL_KEY is not set');
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return { 'x-api-key': key, ...(token ? { [SESSION_HEADER]: token } : {}) };
+  return { 'x-api-key': key, [WEB_CLIENT_HEADER]: '1', ...(token ? { [SESSION_HEADER]: token } : {}) };
 }
 
 /** Запрос к api от имени веб-кабинета. Вызывается только на сервере: ключ не попадает в браузер. */
