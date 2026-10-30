@@ -939,6 +939,16 @@ app.get('/admin/subscriptions', async () => {
   );
 });
 
+/** Удаление ошибочно созданного аккаунта: только пустого, без магазинов, и не владельца платформы. */
+app.delete<{ Params: { userId: string } }>('/admin/users/:userId', async (request, reply) => {
+  const user = await prisma.user.findUnique({ where: { id: request.params.userId }, include: { _count: { select: { shops: true } } } });
+  if (!user) return reply.code(404).send({ error: 'Аккаунт не найден.' });
+  if (user.isAdmin) return reply.code(400).send({ error: 'Аккаунт владельца удалить нельзя.' });
+  if (user._count.shops > 0) return reply.code(400).send({ error: 'У аккаунта есть магазины, удалить нельзя.' });
+  await prisma.user.delete({ where: { id: user.id } });
+  return { ok: true };
+});
+
 /** Ручное продление после оплаты в WhatsApp: тариф, доплата за отзывы и срок «оплачено до». */
 app.put<{ Params: { userId: string }; Body: { plan?: string; reviewsAddon?: boolean; paidUntil?: string | null; addMonths?: number } }>(
   '/admin/subscriptions/:userId',

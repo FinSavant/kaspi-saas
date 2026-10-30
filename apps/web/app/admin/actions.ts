@@ -3,6 +3,12 @@
 import { revalidatePath } from 'next/cache';
 import { api } from '@/lib/api';
 
+/** Удаляет пустой аккаунт, созданный по ошибке (api не даст удалить аккаунт с магазинами). */
+export async function deleteAccount(formData: FormData): Promise<void> {
+  await api(`/admin/users/${String(formData.get('userId'))}`, { method: 'DELETE' });
+  revalidatePath('/admin');
+}
+
 /** Сохраняет тариф продавца после оплаты: смена тарифа, отзывы, продление на N месяцев или точная дата. */
 export async function saveSubscription(formData: FormData): Promise<void> {
   const userId = String(formData.get('userId'));

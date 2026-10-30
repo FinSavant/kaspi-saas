@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
-import { saveSubscription } from './actions';
+import { deleteAccount, saveSubscription } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,7 +53,14 @@ export default async function AdminPage() {
               <tr key={r.userId} className="border-t border-slate-200 align-top">
                 <td className="px-3 py-3">
                   <div className="font-medium">{r.name ?? r.login}</div>
+                  {r.name && <div className="text-xs text-slate-500">{r.login}</div>}
                   <div className="text-xs text-slate-500">{r.shops.join(', ') || 'нет магазинов'}</div>
+                  {!r.isAdmin && r.shops.length === 0 && (
+                    <form action={deleteAccount} className="mt-1">
+                      <input type="hidden" name="userId" value={r.userId} />
+                      <button className="text-xs text-red-600 hover:underline">Удалить пустой аккаунт</button>
+                    </form>
+                  )}
                 </td>
                 <td className="px-3 py-3">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS[r.status].cls}`}>
