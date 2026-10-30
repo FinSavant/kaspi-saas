@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
@@ -68,6 +69,26 @@ export async function register(_prev: AuthState, formData: FormData): Promise<Au
     email: field(formData, 'email'),
     password: field(formData, 'password'),
   });
+}
+
+export interface CredentialsState {
+  ok?: boolean;
+  error?: string;
+}
+
+/** Запасной вход по email и паролю из «Настроек». */
+export async function saveCredentials(_prev: CredentialsState, formData: FormData): Promise<CredentialsState> {
+  if (field(formData, 'password') !== field(formData, 'password2')) return { error: 'Пароли не совпадают.' };
+  try {
+    await api('/auth/credentials', {
+      method: 'PUT',
+      body: { email: field(formData, 'email'), password: field(formData, 'password'), currentPassword: field(formData, 'currentPassword') },
+    });
+  } catch (error) {
+    return { error: error instanceof ApiError ? error.message : 'Не удалось сохранить.' };
+  }
+  revalidatePath('/', 'layout');
+  return { ok: true };
 }
 
 export async function logout(): Promise<void> {

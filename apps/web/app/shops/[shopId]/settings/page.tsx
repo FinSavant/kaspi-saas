@@ -3,6 +3,7 @@ import { HelpTip } from '@/components/HelpTip';
 import { TIPS } from '@/lib/tips';
 import { api } from '@/lib/api';
 import { ExpensesForm, FeesForm } from '../analytics/forms';
+import { CredentialsForm } from '@/app/(auth)/AuthForms';
 import { CabinetLoginForm, ChatLoginForm, ReportNowButton } from '../../ShopForms';
 
 export const dynamic = 'force-dynamic';
@@ -53,10 +54,11 @@ export default async function SettingsPage({
 }) {
   const { shopId } = await params;
   const { added } = await searchParams;
-  const [s, shops, telegram] = await Promise.all([
+  const [s, shops, telegram, me] = await Promise.all([
     api<ShopSettings>(`/shops/${shopId}/settings`),
     api<{ id: string; name: string; merchantId: string }[]>('/shops'),
     api<{ configured: boolean; linked: boolean; url: string | null }>(`/shops/${shopId}/telegram`),
+    api<{ email: string | null; hasPassword: boolean }>('/auth/me'),
   ]);
 
   return (
@@ -184,6 +186,16 @@ export default async function SettingsPage({
             Подключить Telegram
           </a>
         )}
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          <h2 className="font-semibold">Вход по email и паролю</h2>
+          <p className="text-xs text-slate-500">
+            {me.hasPassword ? 'Здесь можно сменить email или пароль.' : 'Запасной способ входа на случай, если не будет доступа к Telegram.'}
+          </p>
+        </div>
+        <CredentialsForm email={me.email} hasPassword={me.hasPassword} />
       </section>
     </div>
   );

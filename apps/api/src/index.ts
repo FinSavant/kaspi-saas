@@ -251,7 +251,27 @@ app.post('/auth/logout', async (request) => {
 app.get('/auth/me', async (request, reply) => {
   if (!request.user) return reply.code(401).send({ error: 'login required' });
   const user = await prisma.user.findUniqueOrThrow({ where: { id: request.user.id } });
-  return { id: user.id, email: user.email, name: user.name, isAdmin: user.isAdmin };
+  return { id: user.id, email: user.email, name: user.name, isAdmin: user.isAdmin, hasPassword: user.passwordHash !== '!' };
+});
+
+/**
+ * Вход по email и паролю для вошедшего продавца: запасной способ у тех, кто вошёл через
+ * Telegram, и смена пароля. Если пароль уже есть, нужен текущий.
+ */
+app.put<{ Body: { email?: string; password?: string; currentPassword?: string } }>('/auth/credentials', async (request, reply) => {
+  if (!request.user) return reply.code(401).send({ error: 'login required' });
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: request.user.id } });
+  if (user.passwordHash !== '!' && !verifyPassword(String(request.body?.currentPassword ?? ''), user.passwordHash)) {
+    return reply.code(400).send({ error: 'Текущий пароль неверный.' });
+  }
+  const email = normalizeEmail(String(request.body?.email ?? ''));
+  const password = String(request.body?.password ?? '');
+  if (!isValidEmail(email)) return reply.code(400).send({ error: 'Проверьте email.' });
+  if (password.length < MIN_PASSWORD_LENGTH) return reply.code(400).send({ error: `Пароль — не короче ${MIN_PASSWORD_LENGTH} символов.` });
+  const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (taken && taken.id !== user.id) return reply.code(409).send({ error: 'Этот email уже занят другим аккаунтом.' });
+  await prisma.user.update({ where: { id: user.id }, data: { email, passwordHash: hashPassword(password) } });
+  return { ok: true, email };
 });
 
 
