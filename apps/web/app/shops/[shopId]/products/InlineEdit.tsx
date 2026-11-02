@@ -108,7 +108,7 @@ export function StoresCell({ shopId, productId, stores }: { shopId: string; prod
   return (
     <div className="space-y-1">
       {stores.map((s) => (
-        <div key={s.storeId} className="flex items-center justify-end gap-1.5 text-xs whitespace-nowrap">
+        <div key={s.storeId} className="flex items-center justify-end gap-1 text-[11px] leading-none whitespace-nowrap">
           <span className="text-xs font-medium text-slate-500">{s.storeId.split('_').pop()}</span>
           <button
             type="button"
@@ -122,12 +122,12 @@ export function StoresCell({ shopId, productId, stores }: { shopId: string; prod
                 setError(r.error);
               })
             }
-            className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 ${s.available ? 'bg-blue-600' : 'bg-slate-300'}`}
+            className={`relative h-4 w-7 shrink-0 rounded-full transition disabled:opacity-50 ${s.available ? 'bg-blue-600' : 'bg-slate-300'}`}
           >
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${s.available ? 'left-4.5' : 'left-0.5'}`} />
+            <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition ${s.available ? 'left-3.5' : 'left-0.5'}`} />
           </button>
           {s.preOrder ? (
-            <span className="text-xs font-medium text-indigo-700">предзаказ {s.preOrder} д.</span>
+            <span className="text-xs font-medium text-indigo-700">пред. {s.preOrder} д.</span>
           ) : (
             <EditPopover
               label={`Остаток на ${s.storeId.split('_').pop()}, шт`}
@@ -136,7 +136,7 @@ export function StoresCell({ shopId, productId, stores }: { shopId: string; prod
               onSave={(value) => editOffer(shopId, productId, { kind: 'stock', storeId: s.storeId, value })}
             >
               <span className={`tabular-nums ${s.available && s.stockCount === 0 ? 'font-semibold text-red-600' : 'text-slate-700'}`}>
-                {s.stockCount === null ? '—' : `${s.stockCount} шт.`}
+                {s.stockCount === null ? '—' : `${s.stockCount} шт`}
               </span>
             </EditPopover>
           )}
