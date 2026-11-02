@@ -1,0 +1,43 @@
+[Unit]
+Description=SANQ Price Reader (чтение цен конкурентов Kaspi для робота цен)
+Documentation=file:///opt/kaspi-saas/deploy/price-reader/README.md
+After=network-online.target
+Wants=network-online.target
+# Не больше 5 запусков за 10 минут, потом systemd прекращает перезапуски
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sanq-reader
+Group=sanq-reader
+WorkingDirectory=/opt/kaspi-saas
+# SERVER_URL, SERVER_AUTH, API_INTERNAL_KEY. Файл root:root, права 600, вне репозитория
+EnvironmentFile=/etc/sanq/price-reader.env
+ExecStart=/usr/bin/node --import tsx scripts/price-reader.ts
+Restart=on-failure
+RestartSec=10
+# Код 78: Kaspi долго отвечает 405, опрос остановлен намеренно. Не перезапускать
+RestartPreventExitStatus=78
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# Журнал: journalctl -u sanq-price-reader -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sanq-price-reader
+
+# Ограничения: читателю нужна только сеть и чтение кода
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
