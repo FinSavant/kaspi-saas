@@ -21,7 +21,6 @@ const GROUPS = [
     title: 'Kaspi',
     items: [
       { path: 'home', label: 'Главная', icon: '🏠' },
-      { path: 'products', label: 'Товары/Предзаказ', icon: '🏷️' },
       { path: 'waybills', label: 'Накладные', icon: '🧾' },
       { path: 'picking', label: 'Сборка', icon: '📦' },
       { path: 'robot', label: 'Робот цен', icon: '🤖' },

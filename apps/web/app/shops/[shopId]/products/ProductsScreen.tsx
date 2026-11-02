@@ -137,14 +137,14 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
         <BulkProvider ids={products.map((p) => p.id)}>
           <BulkBar shopId={shopId} />
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4">
-            <table className="w-full min-w-[900px] text-sm">
+            <table className="w-full min-w-[1000px] text-sm">
               <thead>
                 <tr className="border-b-2 border-slate-300 text-xs font-bold tracking-wide uppercase">
                   <th className="py-2.5 pl-3 text-left">
                     <SelectAllCheckbox />
                   </th>
                   {HEADERS.map((h) => (
-                    <th key={h.key} className={`${hiddenIn(view, h.key)} px-3 py-2.5 whitespace-nowrap ${h.className}`}>
+                    <th key={h.key} className={`${hiddenIn(view, h.key)} px-2 py-2.5 whitespace-nowrap ${h.className}`}>
                       {h.key === 'markup' && view === 'robot' ? (
                         <MarkupForm shopId={shopId} percent={[...settings.markupPercents].sort((a, b) => a - b)[0] ?? 5} />
                       ) : (

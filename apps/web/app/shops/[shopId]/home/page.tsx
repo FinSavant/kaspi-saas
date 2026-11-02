@@ -117,8 +117,8 @@ export default async function HomePage({ params }: { params: Promise<{ shopId: s
       {has('products') && noCost > 0 && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           У {noCost} товаров не указана себестоимость — прибыль и мин. цена по ним не считаются.{' '}
-          <Link href={`${base}/products`} className="font-medium underline">
-            Заполнить в «Товары/Предзаказ»
+          <Link href={`${base}/robot`} className="font-medium underline">
+            Заполнить в «Робот цен»
           </Link>
         </p>
       )}

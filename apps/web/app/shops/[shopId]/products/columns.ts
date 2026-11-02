@@ -14,7 +14,7 @@ export type ColumnKey = 'name' | 'price' | 'position' | 'stores' | 'cost' | 'mar
 
 const VIEW_COLUMNS: Record<ProductsView, ColumnKey[]> = {
   products: ['name', 'price', 'stores', 'cost', 'preorder', 'status'],
-  robot: ['name', 'price', 'position', 'cost', 'markup', 'floor', 'ceiling', 'step', 'bot', 'status'],
+  robot: ['name', 'price', 'stores', 'position', 'cost', 'markup', 'floor', 'ceiling', 'step', 'bot', 'preorder', 'status'],
 };
 
 /**
@@ -26,14 +26,14 @@ export const hiddenIn = (view: ProductsView, key: ColumnKey) => (VIEW_COLUMNS[vi
 export const HEADERS: { key: ColumnKey; label: string; className: string }[] = [
   { key: 'name', label: 'Товар', className: 'text-left text-slate-700' },
   { key: 'price', label: 'Цена', className: `${COL.price} text-right text-sky-800` },
-  { key: 'position', label: 'Позиция', className: 'text-center text-slate-700' },
   { key: 'stores', label: 'Склад · наличие · остаток', className: 'text-right text-slate-700' },
+  { key: 'position', label: 'Позиция', className: 'text-center text-slate-700' },
   { key: 'cost', label: 'Себестоимость', className: `${COL.cost} text-right text-rose-800` },
   { key: 'markup', label: 'Мин. цена + %', className: `${COL.cost} text-right text-rose-800` },
   { key: 'floor', label: 'Мин. цена', className: `${COL.bot} text-right text-amber-900` },
   { key: 'ceiling', label: 'Макс. цена', className: `${COL.bot} text-right text-amber-900` },
   { key: 'step', label: 'Шаг', className: `${COL.bot} text-right text-amber-900` },
-  { key: 'preorder', label: 'Предзаказ, дн.', className: `${COL.preorder} text-right text-indigo-800` },
   { key: 'bot', label: 'Бот', className: `${COL.toggle} text-center text-emerald-800` },
+  { key: 'preorder', label: 'Предзаказ, дн.', className: `${COL.preorder} text-right text-indigo-800` },
   { key: 'status', label: '', className: '' },
 ];

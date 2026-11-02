@@ -1,8 +1,7 @@
-import { ProductsScreen, type ProductsPageProps } from './ProductsScreen';
+import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic';
-
-/** «Товары»: цены, склады, себестоимость и предзаказ. */
-export default function ProductsPage(props: ProductsPageProps) {
-  return <ProductsScreen view="products" {...props} />;
+/** Вкладку «Товары/Предзаказ» убрали: всё теперь в «Робот цен». Старые ссылки ведут туда. */
+export default async function ProductsPage({ params }: { params: Promise<{ shopId: string }> }) {
+  const { shopId } = await params;
+  redirect(`/shops/${shopId}/robot`);
 }
