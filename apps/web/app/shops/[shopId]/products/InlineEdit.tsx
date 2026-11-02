@@ -106,9 +106,9 @@ export function StoresCell({ shopId, productId, stores }: { shopId: string; prod
   if (stores.length === 0) return <span className="text-xs text-slate-400">нет данных — синхронизируйте</span>;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {stores.map((s) => (
-        <div key={s.storeId} className="flex items-center justify-end gap-2 text-sm whitespace-nowrap">
+        <div key={s.storeId} className="flex items-center justify-end gap-1.5 text-xs whitespace-nowrap">
           <span className="text-xs font-medium text-slate-500">{s.storeId.split('_').pop()}</span>
           <button
             type="button"

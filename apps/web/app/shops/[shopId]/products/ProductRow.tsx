@@ -44,7 +44,7 @@ export interface ProductView {
   } | null;
 }
 
-const INPUT = 'w-20 rounded border bg-white px-2 py-1 text-right tabular-nums';
+const INPUT = 'w-16 rounded border bg-white px-1.5 py-1 text-right tabular-nums';
 
 /** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
 const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
@@ -108,21 +108,21 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
 
   return (
     <tr className="border-t border-slate-200 align-middle hover:bg-slate-50">
-      <td className="py-2 pl-3">
+      <td className="py-2 pl-2">
         <RowCheckbox id={product.id} />
       </td>
-      <td className="max-w-xs px-2 py-2">
+      <td className="max-w-[200px] px-1.5 py-2">
         <form id={formId} ref={formRef} action={action}>
           <input type="hidden" name="shopId" value={shopId} />
           <input type="hidden" name="productId" value={product.id} />
           <input type="hidden" name="hasSetting" value={setting ? '1' : '0'} />
         </form>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {product.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- фото с CDN Kaspi, без оптимизации Next
-            <img src={product.imageUrl} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
+            <img src={product.imageUrl} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
           ) : (
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
           )}
           {shopUrl(product) ? (
             <a
@@ -130,17 +130,17 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
               target="_blank"
               rel="noreferrer"
               title="Открыть карточку на kaspi.kz"
-              className="font-medium text-slate-900 hover:text-sky-700 hover:underline"
+              className="text-[13px] leading-tight font-medium text-slate-900 hover:text-sky-700 hover:underline"
             >
               {product.name} <span className="text-xs text-slate-400">↗</span>
             </a>
           ) : (
-            <span className="font-medium text-slate-900">{product.name}</span>
+            <span className="text-[13px] leading-tight font-medium text-slate-900">{product.name}</span>
           )}
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
       </td>
-      <td className={`${v('price')} ${COL.price} px-2 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
+      <td className={`${v('price')} ${COL.price} px-1.5 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
         <PriceEdit shopId={shopId} productId={product.id} price={product.price} />
         {/* Как в Okto: под нашей ценой — цена первого места, если мы не первые */}
         {product.position !== null && product.position > 1 && product.topCompetitorPrice !== null && (
@@ -149,17 +149,17 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
           </div>
         )}
       </td>
-      <td className={`${v('stores')} px-2 py-2 text-right`}>
+      <td className={`${v('stores')} px-1.5 py-2 text-right`}>
         <StoresCell shopId={shopId} productId={product.id} stores={product.stores ?? []} />
       </td>
-      <td className={`${v('position')} px-2 py-2 text-center`}>
+      <td className={`${v('position')} px-1.5 py-2 text-center`}>
         <PositionCell product={product} />
       </td>
-      <td className={`${v('cost')} ${COL.cost} px-2 py-2 text-right`}>
+      <td className={`${v('cost')} ${COL.cost} px-1.5 py-2 text-right`}>
         <input {...field} name="costPrice" defaultValue={product.costPrice ?? ''} placeholder="₸" aria-label="Себестоимость" className={`${INPUT} border-rose-300 font-semibold text-rose-800`} />
       </td>
       <td
-        className={`${v('markup')} ${COL.cost} px-2 py-2 text-right whitespace-nowrap tabular-nums`}
+        className={`${v('markup')} ${COL.cost} px-1.5 py-2 text-right whitespace-nowrap tabular-nums`}
         title={
           product.minProfitablePrice === null
             ? 'Укажите себестоимость — тогда посчитаю минимальную цену с наценкой'
@@ -194,19 +194,19 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
           </label>
         )}
       </td>
-      <td className={`${v('floor')} ${COL.bot} px-2 py-2 text-right`}>
+      <td className={`${v('floor')} ${COL.bot} px-1.5 py-2 text-right`}>
         <input {...field} name="floorPrice" defaultValue={setting?.floorPrice ?? ''} placeholder="₸" aria-label="Минимальная цена" className={`${INPUT} border-amber-400 font-bold text-amber-900`} />
       </td>
-      <td className={`${v('ceiling')} ${COL.bot} px-2 py-2 text-right`}>
+      <td className={`${v('ceiling')} ${COL.bot} px-1.5 py-2 text-right`}>
         <input {...field} name="ceilingPrice" defaultValue={setting?.ceilingPrice ?? ''} placeholder="₸" aria-label="Максимальная цена" className={`${INPUT} border-amber-300 text-amber-900`} />
       </td>
-      <td className={`${v('step')} ${COL.bot} px-2 py-2 text-right`}>
-        <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className="w-14 rounded border border-amber-300 bg-white px-2 py-1 text-right text-amber-900 tabular-nums" />
+      <td className={`${v('step')} ${COL.bot} px-1.5 py-2 text-right`}>
+        <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className="w-12 rounded border border-amber-300 bg-white px-1 py-1 text-right text-amber-900 tabular-nums" />
       </td>
-      <td className={`${v('bot')} ${COL.toggle} px-2 py-2 text-center`}>
+      <td className={`${v('bot')} ${COL.toggle} px-1.5 py-2 text-center`}>
         <input form={formId} type="checkbox" name="enabled" defaultChecked={setting?.enabled ?? false} onChange={save} aria-label="Бот включён" className="h-5 w-5 accent-emerald-600" />
       </td>
-      <td className={`${v('preorder')} ${COL.preorder} px-2 py-2 text-right`}>
+      <td className={`${v('preorder')} ${COL.preorder} px-1.5 py-2 text-right`}>
         <input
           {...field}
           name="preorderDays"
@@ -214,23 +214,23 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
           placeholder="—"
           title="Товар сразу встанет на предзаказ на столько дней (1–30, больше Kaspi не принимает) остатки сохранятся; Kaspi применяет минут через 10–15. Закончится — останется на предзаказе. Очистить — снять предзаказ."
           aria-label="Предзаказ, дней"
-          className="w-14 rounded border border-indigo-300 bg-white px-2 py-1 text-right text-indigo-900 tabular-nums"
+          className="w-12 rounded border border-indigo-300 bg-white px-1 py-1 text-right text-indigo-900 tabular-nums"
         />
         {product.preorderDays && product.preOrder !== product.preorderDays ? (
-          <div className="mt-1 text-xs whitespace-nowrap text-slate-500">ставлю в Kaspi…</div>
+          <div className="mt-1 text-[11px] leading-tight text-slate-500">ставлю в Kaspi…</div>
         ) : product.preOrder ? (
-          <div className="mt-1 text-xs font-medium whitespace-nowrap text-indigo-700">на предзаказе · {product.preOrder} д.</div>
+          <div className="mt-1 text-[11px] leading-tight font-medium text-indigo-700">на предзаказе {product.preOrder} д.</div>
         ) : !product.available ? (
-          <div className="mt-1 text-xs whitespace-nowrap text-slate-500">снят с продажи</div>
+          <div className="mt-1 text-[11px] leading-tight text-slate-500">снят с продажи</div>
         ) : null}
       </td>
-      <td className="w-24 py-2 text-xs whitespace-nowrap">
+      <td className="w-6 py-2 pr-1 text-center text-xs">
         {pending ? (
-          <span className="text-slate-500">Сохраняю…</span>
+          <span className="text-slate-500" title="Сохраняю…">…</span>
         ) : state.error ? (
-          <span className="text-red-600">Не сохранено</span>
+          <span className="font-semibold text-red-600" title="Не сохранено">!</span>
         ) : state.ok ? (
-          <span className="text-emerald-700">✓ Сохранено</span>
+          <span className="text-emerald-700" title="Сохранено">✓</span>
         ) : null}
       </td>
     </tr>
