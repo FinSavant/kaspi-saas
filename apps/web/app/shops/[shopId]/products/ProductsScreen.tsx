@@ -113,7 +113,6 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
 
       <nav className="flex flex-wrap items-center gap-2">
         <SearchBox />
-        {view === 'robot' && <MarkupForm shopId={shopId} percents={settings.markupPercents} />}
         <div className="flex-1" />
         <DropdownMenu
           icon="⏷"
@@ -146,7 +145,11 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
                   </th>
                   {HEADERS.map((h) => (
                     <th key={h.key} className={`${hiddenIn(view, h.key)} px-3 py-2.5 whitespace-nowrap ${h.className}`}>
-                      {h.label}
+                      {h.key === 'markup' && view === 'robot' ? (
+                        <MarkupForm shopId={shopId} percent={[...settings.markupPercents].sort((a, b) => a - b)[0] ?? 5} />
+                      ) : (
+                        h.label
+                      )}
                     </th>
                   ))}
                 </tr>

@@ -162,20 +162,17 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
         className={`${v('markup')} ${COL.cost} px-3 py-2 text-right whitespace-nowrap tabular-nums`}
         title={
           product.minProfitablePrice === null
-            ? 'Укажите себестоимость — тогда посчитаю цену для каждого варианта наценки'
-            : 'Цена, при которой прибыль равна наценке (+5% — 5% от цены) после комиссии с НДС, Kaspi Pay, налога, своих расходов и доставки по тарифу Kaspi'
+            ? 'Укажите себестоимость — тогда посчитаю минимальную цену с наценкой'
+            : 'Цена, при которой прибыль равна наценке (процент задан в шапке колонки — доля от цены) после комиссии с НДС, Kaspi Pay, налога, своих расходов и доставки по тарифу Kaspi'
         }
       >
         {product.minProfitablePrice === null ? (
           <span className="text-xs text-slate-400">—</span>
         ) : (
           <>
-            {product.minPrices.map((v) => (
-              <div key={v.percent} className="leading-tight">
-                <span className="text-[11px] font-normal text-rose-600">+{v.percent}% </span>
-                <span className="font-bold text-rose-800">{v.price === null ? '—' : `${v.price.toLocaleString('ru-RU')} ₸`}</span>
-              </div>
-            ))}
+            <span className="font-bold text-rose-800">
+              {product.minPrices[0]?.price == null ? '—' : `${product.minPrices[0].price.toLocaleString('ru-RU')} ₸`}
+            </span>
             {setting && setting.floorPrice < product.minProfitablePrice && (
               <div className="text-[11px] font-semibold text-red-600">мин. цена ниже!</div>
             )}

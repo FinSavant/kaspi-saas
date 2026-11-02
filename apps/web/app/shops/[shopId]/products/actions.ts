@@ -133,11 +133,11 @@ export async function syncProducts(_prev: SyncState, formData: FormData): Promis
   }
 }
 
-/** Варианты наценки для колонки «Мин. с наценкой»: числа через поля, пустые не считаются. */
+/** Процент наценки для колонки «Мин. цена +%»: одно целое число (хранится в markupPercents как массив из одного значения). */
 export async function saveMarkups(_prev: SaveState, formData: FormData): Promise<SaveState> {
   const shopId = String(formData.get('shopId'));
-  const raw = formData.getAll('markup').map((v) => String(v).trim()).filter(Boolean);
-  if (raw.some((v) => !/^\d{1,2}$/.test(v))) return { error: 'Наценка — целое число процентов, например 5.' };
+  const raw = formData.getAll('markup').map((v) => String(v).trim()).filter(Boolean).slice(0, 1);
+  if (raw.length !== 1 || !/^\d{1,2}$/.test(raw[0]!)) return { error: 'Введите целое число процентов, например 5.' };
   try {
     await api(`/shops/${shopId}/markups`, { method: 'PUT', body: { percents: raw.map(Number) } });
   } catch (error) {
