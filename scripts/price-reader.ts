@@ -7,12 +7,14 @@
 // Необязательно: STOREFRONT_MIN_INTERVAL_MS, BLOCKED_PAUSES_MIN (по умолчанию 5,10,20,40,60),
 // BLOCKED_MAX_CYCLES (по умолчанию 6).
 //
-// Если витрина отвечает 405 (так бывает с адресов дата-центров), цикл прекращается сразу,
-// остальные карточки не запрашиваются, пауза растёт; после долгой блокировки опрос
-// останавливается с предупреждением (код выхода 78, systemd его не перезапускает).
+// Одиночный 405 на одной карточке пропускается. Если витрина закрыта (два 405 подряд, три за цикл,
+// 405 на единственной карточке или любой 429), цикл прекращается сразу, остальные карточки не
+// запрашиваются, пауза растёт; после долгой блокировки опрос останавливается с предупреждением
+// (код выхода 78, systemd его не перезапускает). Правила цикла: price-reader-cycle.ts.
 
 import { KaspiStorefrontError, KaspiStorefrontPriceSource } from '@kaspi/kaspi-client';
 import { DEFAULT_BACKOFF, growingPause, onBlocked, parsePauses } from './price-reader-backoff';
+import { nextStreak, runCycle } from './price-reader-cycle';
 
 const serverUrl = process.env.SERVER_URL?.replace(/\/$/, '');
 const serverAuth = process.env.SERVER_AUTH;
@@ -43,11 +45,20 @@ const headers = {
 };
 const storefront = new KaspiStorefrontPriceSource({ minIntervalMs: Number(process.env.STOREFRONT_MIN_INTERVAL_MS ?? 1_000) });
 
-/** Витрина просит остановиться: 405 (блокировка адреса) или 429 (слишком часто). */
-class StorefrontPushback extends Error {
-  constructor(readonly status: number) {
-    super(`витрина Kaspi ответила ${status}`);
-  }
+/** Строка для журнала: статус и безопасные поля ответа, без cookie и токенов. */
+function describeStorefrontError(error: KaspiStorefrontError): string {
+  const i = error.info;
+  if (!i) return `${error.status}: нет данных об ответе`;
+  return [
+    `${error.status}:`,
+    `url=${i.url || '-'}`,
+    `redirected=${i.redirected}`,
+    `server=${i.server ?? '-'}`,
+    `allow=${i.allow ?? '-'}`,
+    `content-type=${i.contentType ?? '-'}`,
+    `location=${i.location ?? '-'}`,
+    `тело="${i.snippet}"`,
+  ].join(' ');
 }
 
 async function server<T>(path: string, body?: unknown): Promise<T> {
@@ -92,53 +103,46 @@ while (!stopping) {
   try {
     const tasks = await server<{ masterSku: string; cityId: string; repricer: boolean }[]>('/reader/tasks');
     serverFailures = 0;
-    let sent = 0;
-    let failed = 0;
-    for (const task of tasks) {
-      if (stopping) break;
-      try {
-        let offers;
-        try {
-          offers = await storefront.getOffers(task);
-        } catch (error) {
-          if (error instanceof KaspiStorefrontError && (error.status === 405 || error.status === 429)) {
-            throw new StorefrontPushback(error.status);
-          }
-          throw error;
-        }
+    const result = await runCycle(
+      tasks,
+      async (task) => {
+        const offers = await storefront.getOffers(task);
         await server('/reader/offers', { ...task, offers });
-        sent++;
-      } catch (error) {
-        if (error instanceof StorefrontPushback) throw error;
-        failed++;
-        warn(`карточка ${task.masterSku}: ${error instanceof Error ? error.message : error}`);
-      }
-    }
-    if (sent > 0 && blockedStreak > 0) info('Витрина Kaspi снова отвечает, возвращаюсь к обычному режиму');
-    if (sent > 0 || tasks.length === 0) blockedStreak = 0;
-    info(`карточек прочитано: ${sent}${failed ? `, ошибок: ${failed}` : ''}`);
-    pauseMs = Math.max(5_000, CYCLE_MS - (Date.now() - started));
-  } catch (error) {
-    if (error instanceof StorefrontPushback) {
-      blockedStreak++;
+      },
+      { warn },
+      { shouldStop: () => stopping, describe: (e) => (e instanceof KaspiStorefrontError ? describeStorefrontError(e) : undefined) },
+    );
+    const previousStreak = blockedStreak;
+    blockedStreak = nextStreak(previousStreak, result);
+    if (result.outcome === 'ok') {
+      if (result.sent > 0 && previousStreak > 0) info('Витрина Kaspi снова отвечает, возвращаюсь к обычному режиму');
+      info(`карточек прочитано: ${result.sent}${result.failed ? `, ошибок: ${result.failed}` : ''}`);
+      pauseMs = Math.max(5_000, CYCLE_MS - (Date.now() - started));
+    } else {
       const decision = onBlocked(blockedStreak, backoff);
       if (decision.action === 'stop') {
         fail(
-          `Kaspi отвечает ${error.status} уже ${decision.streak} циклов подряд. Опрос остановлен, чтобы не нагружать витрину. ` +
+          `Kaspi отвечает ${result.status} уже ${decision.streak} циклов подряд. Опрос остановлен, чтобы не нагружать витрину. ` +
             `Цены конкурентов не обновляются, робот цен их не получает. Проверьте доступ и запустите службу вручную: systemctl start sanq-price-reader.`,
         );
         process.exit(EXIT_BLOCKED);
       }
       pauseMs = decision.pauseMs;
+      const reason =
+        result.outcome === 'throttled'
+          ? 'просит реже (429)'
+          : result.outcome === 'suspect'
+            ? 'ответил 405 на единственную карточку, это не подтверждает блокировку, но пауза включена'
+            : `ответил ${result.status} на нескольких карточках, витрина закрыта для этого адреса`;
       warn(
-        `Kaspi ответил ${error.status} (витрина закрыта для этого адреса или просит реже). Цикл прерван, остальные карточки не запрашиваются. ` +
+        `Kaspi ${reason}. Цикл прерван, остальные карточки не запрашиваются. ` +
           `Пауза ${Math.round(pauseMs / 60_000)} мин. Подряд: ${decision.streak} из ${backoff.maxBlockedCycles}.`,
       );
-    } else {
-      serverFailures++;
-      pauseMs = growingPause(serverFailures, CYCLE_MS, SERVER_ERROR_CAP_MS);
-      fail(`нет связи с сервером: ${error instanceof Error ? error.message : error}. Повтор через ${Math.round(pauseMs / 1000)} с`);
     }
+  } catch (error) {
+    serverFailures++;
+    pauseMs = growingPause(serverFailures, CYCLE_MS, SERVER_ERROR_CAP_MS);
+    fail(`нет связи с сервером: ${error instanceof Error ? error.message : error}. Повтор через ${Math.round(pauseMs / 1000)} с`);
   }
   if (!stopping) await sleep(pauseMs);
 }

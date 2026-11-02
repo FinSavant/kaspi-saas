@@ -72,6 +72,56 @@ describe('KaspiStorefrontPriceSource', () => {
     expect(await source.getOffers({ masterSku: '1', cityId: '750000000' })).toHaveLength(1);
   });
 
+  it('reports safe diagnostics of a 405 response without touching the request', async () => {
+    const html = '<html><body>blocked ' + 'ab cd '.repeat(100) + '</body></html>';
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(html, {
+          status: 405,
+          headers: { Server: 'nginx', Allow: 'GET, HEAD', 'Content-Type': 'text/html', 'Set-Cookie': 'sid=secret', Location: '/blocked' },
+        }),
+    );
+    const source = new KaspiStorefrontPriceSource({ fetchImpl, minIntervalMs: 0 });
+
+    const error = await source.getOffers({ masterSku: '7', cityId: '750000000' }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(KaspiStorefrontError);
+    expect(error.status).toBe(405);
+    expect(error.info).toMatchObject({ server: 'nginx', allow: 'GET, HEAD', contentType: 'text/html', location: '/blocked', redirected: false });
+    expect(error.info.snippet.length).toBeLessThanOrEqual(200);
+    expect(JSON.stringify(error.info)).not.toContain('secret');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://kaspi.kz/yml/offer-view/offers/7');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual({
+      Accept: 'application/json, text/*',
+      'Content-Type': 'application/json; charset=UTF-8',
+      Referer: 'https://kaspi.kz/shop/p/-7/',
+    });
+    expect(JSON.parse(init.body as string)).toEqual({
+      cityId: '750000000',
+      id: '7',
+      merchantUUID: [],
+      limit: 50,
+      page: 0,
+      sortOption: 'PRICE',
+      installationId: '-1',
+    });
+  });
+
+  it('redacts token-like strings and reports 429 diagnostics', async () => {
+    const token = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const fetchImpl = vi.fn(async () => new Response(`too many ${token}`, { status: 429, headers: { 'Content-Type': 'text/plain' } }));
+    const source = new KaspiStorefrontPriceSource({ fetchImpl, minIntervalMs: 0 });
+
+    const error = await source.getOffers({ masterSku: '8', cityId: '750000000' }).catch((e) => e);
+
+    expect(error.status).toBe(429);
+    expect(error.info.snippet).toBe('too many [скрыто]');
+    expect(error.info.contentType).toBe('text/plain');
+  });
+
   it('spaces requests by the minimum interval', async () => {
     const times: number[] = [];
     const fetchImpl = async () => {

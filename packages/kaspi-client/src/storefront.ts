@@ -11,10 +11,41 @@ export interface StorefrontOptions {
   fetchImpl?: typeof fetch;
 }
 
+/** Диагностика ответа с ошибкой: адрес, безопасные заголовки и начало тела (без cookie и токенов). */
+export interface StorefrontErrorInfo {
+  url: string;
+  redirected: boolean;
+  server?: string;
+  allow?: string;
+  contentType?: string;
+  location?: string;
+  snippet: string;
+}
+
+const SNIPPET_LIMIT = 200;
+
+export function describeErrorResponse(res: Response, body: string): StorefrontErrorInfo {
+  const header = (name: string) => res.headers.get(name) ?? undefined;
+  return {
+    url: res.url,
+    redirected: res.redirected,
+    server: header('server'),
+    allow: header('allow'),
+    contentType: header('content-type'),
+    location: header('location'),
+    snippet: body
+      .replace(/s+/g, ' ')
+      .trim()
+      .slice(0, SNIPPET_LIMIT)
+      .replace(/[A-Za-z0-9_-]{32,}/g, '[скрыто]'),
+  };
+}
+
 export class KaspiStorefrontError extends Error {
   constructor(
     readonly status: number,
     readonly body: string,
+    readonly info?: StorefrontErrorInfo,
   ) {
     super(`Kaspi storefront responded with ${status}`);
   }
@@ -83,7 +114,10 @@ export class KaspiStorefrontPriceSource implements CompetitorPriceSource {
         ...init,
         headers: { Accept: 'application/json, text/*', ...init.headers },
       });
-      if (!res.ok) throw new KaspiStorefrontError(res.status, await res.text());
+      if (!res.ok) {
+        const text = await res.text();
+        throw new KaspiStorefrontError(res.status, text, describeErrorResponse(res, text));
+      }
       return res.json();
     });
     this.queue = run.catch(() => undefined);
