@@ -44,7 +44,7 @@ export interface ProductView {
   } | null;
 }
 
-const INPUT = 'w-20 rounded border bg-white px-1.5 py-1 text-right tabular-nums';
+const INPUT = 'ml-auto block w-full max-w-[80px] rounded border bg-white px-1.5 py-1 text-right tabular-nums';
 
 /** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
 const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
@@ -120,9 +120,9 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
         <div className="flex items-center gap-2">
           {product.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- фото с CDN Kaspi, без оптимизации Next
-            <img src={product.imageUrl} alt="" loading="lazy" className="h-11 w-11 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
+            <img src={product.imageUrl} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
           ) : (
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
           )}
           {shopUrl(product) ? (
             <a
@@ -130,12 +130,12 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
               target="_blank"
               rel="noreferrer"
               title={`${product.name} — открыть карточку на kaspi.kz`}
-              className="line-clamp-2 min-w-0 text-[13px] leading-tight font-medium text-slate-900 hover:text-sky-700 hover:underline"
+              className="line-clamp-2 min-w-0 text-xs leading-tight font-medium text-slate-900 hover:text-sky-700 xl:text-[13px] hover:underline"
             >
               {product.name} <span className="text-xs text-slate-400">↗</span>
             </a>
           ) : (
-            <span className="line-clamp-2 min-w-0 text-[13px] leading-tight font-medium text-slate-900" title={product.name}>{product.name}</span>
+            <span className="line-clamp-2 min-w-0 text-xs leading-tight font-medium text-slate-900 xl:text-[13px]" title={product.name}>{product.name}</span>
           )}
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
