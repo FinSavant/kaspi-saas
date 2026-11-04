@@ -16,7 +16,7 @@ export function MarkupForm({ shopId, percent }: { shopId: string; percent: numbe
     <form
       action={action}
       className="flex flex-col items-end gap-1 font-normal normal-case"
-      title="Себестоимость плюс ваш процент прибыли, с учётом комиссии Kaspi, налога и доставки. Справочная цена: если «Мин. цена» ниже, строка подсвечивается. Робот ориентируется на «Мин. цену»."
+      title="Только для ориентира: себестоимость плюс ваш процент. Робот опирается на колонку «Мин. цена»."
     >
       <input type="hidden" name="shopId" value={shopId} />
       <span className="font-bold uppercase">Себестоимость +</span>
