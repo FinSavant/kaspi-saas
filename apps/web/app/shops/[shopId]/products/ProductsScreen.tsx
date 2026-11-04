@@ -140,7 +140,7 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
             <table className="w-full min-w-[930px] table-fixed text-[13px] xl:text-sm">
               <thead>
                 <tr className="border-b-2 border-slate-300 text-[9.5px] leading-tight font-bold tracking-tight [hyphens:auto] min-[1400px]:text-[11px]">
-                  <th className="w-[36px] py-2.5 pl-2 text-left">
+                  <th className="w-[36px] py-2.5 pl-2 text-left min-[1800px]:w-[40px]">
                     <SelectAllCheckbox />
                   </th>
                   {HEADERS.map((h) => (
