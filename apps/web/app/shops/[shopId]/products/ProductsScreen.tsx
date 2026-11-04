@@ -137,14 +137,14 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
         <BulkProvider ids={products.map((p) => p.id)}>
           <BulkBar shopId={shopId} />
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">
-            <table className="w-full min-w-[930px] table-fixed text-[13px] xl:text-sm">
+            <table className="w-full min-w-[930px] table-fixed text-[13px] xl:text-sm min-[1900px]:text-[15px]">
               <thead>
-                <tr className="border-b-2 border-slate-300 text-[9.5px] leading-tight font-bold tracking-tight [hyphens:auto] min-[1400px]:text-[11px]">
-                  <th className="w-[36px] py-2.5 pl-2 text-left min-[1800px]:w-[40px]">
+                <tr className="border-b-2 border-slate-400 bg-slate-100 text-[9.5px] leading-tight font-extrabold tracking-tight [hyphens:auto] min-[1360px]:text-[10px] min-[1400px]:text-[11px] min-[1600px]:text-xs min-[1900px]:text-[13px] min-[2300px]:text-sm">
+                  <th className="w-[36px] py-2.5 pl-2 text-left min-[1800px]:w-[44px]">
                     <SelectAllCheckbox />
                   </th>
                   {HEADERS.map((h) => (
-                    <th key={h.key} className={`${hiddenIn(view, h.key)} px-1 py-2 xl:px-1.5 ${h.className}`}>
+                    <th key={h.key} className={`${hiddenIn(view, h.key)} px-1 py-3 xl:px-1.5 ${h.className}`}>
                       {h.key === 'markup' && view === 'robot' ? (
                         <MarkupForm shopId={shopId} percent={[...settings.markupPercents].sort((a, b) => a - b)[0] ?? 5} />
                       ) : (

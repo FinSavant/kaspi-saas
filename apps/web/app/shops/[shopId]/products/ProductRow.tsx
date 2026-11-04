@@ -44,7 +44,7 @@ export interface ProductView {
   } | null;
 }
 
-const INPUT = 'ml-auto block w-full max-w-[96px] rounded border bg-white px-1 py-1 text-right text-xs tabular-nums xl:px-1.5 xl:text-sm';
+const INPUT = 'ml-auto block w-full max-w-[96px] min-[1800px]:max-w-[130px] rounded border bg-white px-1 py-1 text-right text-xs tabular-nums xl:px-1.5 xl:text-sm';
 
 /** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
 const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
