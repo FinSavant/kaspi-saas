@@ -48,7 +48,9 @@ import {
 import { prisma } from '@kaspi/db';
 import {
   buildPriceListXml,
+  describeHandoverError,
   isAwaitingHandover,
+  isAwaitingPacking,
   KaspiCabinetAuthError,
   KaspiCabinetClient,
   KaspiClient,
@@ -1172,6 +1174,86 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybills/candidates', as
   }
   return result;
 });
+
+/** Магазины, у которых сейчас идёт передача заказов (api — один процесс). */
+const handoverRunning = new Set<string>();
+
+/** Заказы вкладки «Упаковка» кабинета Kaspi (не собраны) — для перевода в «Передачу». */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybills/packing', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const client = new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey()));
+  const orders = (await client.listOrders({ state: 'KASPI_DELIVERY', from: new Date(Date.now() - 14 * DAY_MS) })).filter(isAwaitingPacking);
+  const result = [];
+  for (const order of orders) {
+    const items = await client.getOrderEntries(order.id).catch(() => []);
+    result.push({
+      code: order.code,
+      city: order.city,
+      express: order.express,
+      createdAt: order.createdAt,
+      plannedDeliveryDate: order.plannedDeliveryDate,
+      items: items.map((i) => ({ sku: i.sku, name: i.name, quantity: i.quantity })),
+    });
+  }
+  return result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+});
+
+/**
+ * Перевод выбранных заказов из «Упаковки» в «Передачу»: Kaspi получает отметку «собран» и число мест.
+ * Принимаются только заказы, которые сейчас действительно на упаковке (сверяем с Kaspi),
+ * один запуск на магазин за раз; результат — по каждому заказу отдельно.
+ */
+app.post<{ Params: { shopId: string }; Body: { orders?: { code?: unknown; places?: unknown }[] } }>(
+  '/shops/:shopId/waybills/handover',
+  async (request, reply) => {
+    const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+    if (!shop) return reply.code(404).send({ error: 'shop not found' });
+    const wanted = Array.isArray(request.body?.orders) ? request.body.orders : [];
+    const places = new Map<string, number>();
+    for (const o of wanted) {
+      const n = Number(o.places ?? 1);
+      if (typeof o.code !== 'string' || !Number.isInteger(n) || n < 1 || n > 99) {
+        return reply.code(400).send({ error: 'Число мест должно быть целым от 1 до 99.' });
+      }
+      places.set(o.code, n);
+    }
+    if (places.size === 0) return reply.code(400).send({ error: 'Выберите хотя бы один заказ.' });
+    if (places.size > 200) return reply.code(400).send({ error: 'За один раз можно передать не больше 200 заказов.' });
+
+    // Защита от повторного нажатия: пока идёт прошлый запуск, новый не стартует
+    if (handoverRunning.has(shop.id)) {
+      return reply.code(409).send({ error: 'Передача уже выполняется. Подождите минуту и обновите список.' });
+    }
+    handoverRunning.add(shop.id);
+    try {
+      const client = new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey()));
+      const packing = new Map(
+        (await client.listOrders({ state: 'KASPI_DELIVERY', from: new Date(Date.now() - 14 * DAY_MS) }))
+          .filter(isAwaitingPacking)
+          .map((o) => [o.code, o]),
+      );
+      const results: { code: string; ok: boolean; error?: string }[] = [];
+      for (const [code, count] of places) {
+        const order = packing.get(code);
+        if (!order) {
+          results.push({ code, ok: false, error: 'Заказа нет на упаковке: возможно, он уже собран или отменён.' });
+          continue;
+        }
+        try {
+          await client.assembleOrder(order, count);
+          results.push({ code, ok: true });
+        } catch (error) {
+          app.log.warn({ code, err: error instanceof Error ? error.message : error }, 'handover failed');
+          results.push({ code, ok: false, error: describeHandoverError(error) });
+        }
+      }
+      return { results };
+    } finally {
+      handoverRunning.delete(shop.id);
+    }
+  },
+);
 
 /**
  * Экран «Сборка», как лист подбора на WB: заказы из «Передачи», сгруппированные по товару.
