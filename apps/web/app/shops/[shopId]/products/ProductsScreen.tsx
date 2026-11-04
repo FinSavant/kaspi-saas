@@ -137,7 +137,7 @@ export async function ProductsScreen({ view, params, searchParams }: ProductsPag
         <BulkProvider ids={products.map((p) => p.id)}>
           <BulkBar shopId={shopId} />
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[1180px] table-fixed text-sm">
               <thead>
                 <tr className="border-b-2 border-slate-300 text-[11px] leading-tight font-bold">
                   <th className="py-2.5 pl-3 text-left">
