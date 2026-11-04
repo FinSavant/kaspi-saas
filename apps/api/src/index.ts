@@ -334,14 +334,14 @@ app.get('/shops', async (request) =>
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
-const PRESETS = new Set(['today', 'yesterday', '7', '30', '90', '365']);
+const PRESETS = new Set(['today', 'yesterday', 'month', 'prevmonth', '7', '30', '90', '365']);
 
 /** Начало суток по Алматы (UTC+5) для даты YYYY-MM-DD. */
 const almatyDayStart = (date: string) => new Date(new Date(`${date}T00:00:00Z`).getTime() - ALMATY_OFFSET_MS);
 const almatyToday = () => new Date(Date.now() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
 
 /** Период аналитики: готовый пресет или свои даты (YYYY-MM-DD, включительно). */
-function resolvePeriod(query: { period?: string; from?: string; to?: string }): { from: Date; to: Date; key: string } | null {
+function resolvePeriod(query: { period?: string; from?: string; to?: string }): { from: Date; to: Date; key: string; previous?: { from: Date; to: Date } } | null {
   const isDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
   if (isDate(query.from) && isDate(query.to)) {
     const from = almatyDayStart(query.from!);
@@ -351,6 +351,19 @@ function resolvePeriod(query: { period?: string; from?: string; to?: string }): 
   const period = query.period ?? '30';
   if (!PRESETS.has(period)) return null;
   const todayStart = almatyDayStart(almatyToday());
+  if (period === 'month' || period === 'prevmonth') {
+    // Календарные месяцы по Алматы: текущий — с 1-го числа по сейчас, прошлый — целиком
+    const [y, m] = almatyToday().split('-').map(Number) as [number, number];
+    const monthStart = (offset: number) => almatyDayStart(new Date(Date.UTC(y, m - 1 + offset, 1)).toISOString().slice(0, 10));
+    if (period === 'month') {
+      const from = monthStart(0);
+      const to = new Date();
+      // Сравнение — те же дни прошлого месяца (1–4 ноября ↔ 1–4 октября)
+      const prevFrom = monthStart(-1);
+      return { from, to, key: period, previous: { from: prevFrom, to: new Date(Math.min(prevFrom.getTime() + (to.getTime() - from.getTime()), from.getTime() - 1)) } };
+    }
+    return { from: monthStart(-1), to: new Date(monthStart(0).getTime() - 1), key: period, previous: { from: monthStart(-2), to: new Date(monthStart(-1).getTime() - 1) } };
+  }
   if (period === 'today') return { from: todayStart, to: new Date(), key: period };
   if (period === 'yesterday') return { from: new Date(todayStart.getTime() - DAY_MS), to: new Date(todayStart.getTime() - 1), key: period };
   return { from: new Date(todayStart.getTime() - (Number(period) - 1) * DAY_MS), to: new Date(), key: period };
@@ -389,7 +402,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
 
     const { from, to } = range;
     const length = to.getTime() - from.getTime();
-    const previousFrom = new Date(from.getTime() - length - 1);
+    const previousFrom = range.previous?.from ?? new Date(from.getTime() - length - 1);
+    const previousTo = range.previous?.to ?? new Date(from.getTime() - 1);
 
     const include = { items: { include: { product: { select: { costPrice: true } } } } } as const;
     const [orders, openOrders, commissions, syncJob] = await Promise.all([
@@ -436,8 +450,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
     };
 
     const current = buildSalesReport(reportOrders, { from, to, ...fees });
-    const previous = buildSalesReport(reportOrders, { from: previousFrom, to: new Date(from.getTime() - 1), ...fees });
-    const previousBreakdowns = buildBreakdowns(reportOrders, { from: previousFrom, to: new Date(from.getTime() - 1) });
+    const previous = buildSalesReport(reportOrders, { from: previousFrom, to: previousTo, ...fees });
+    const previousBreakdowns = buildBreakdowns(reportOrders, { from: previousFrom, to: previousTo });
 
     // Нереализованная прибыль: все заказы в работе, независимо от периода
     const openReport = buildSalesReport(openOrders.map(toReportOrder), {
@@ -470,6 +484,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
       period: range.key,
       from,
       to,
+      previousFrom,
+      previousTo,
       ordersSyncedAt: shop.ordersSyncedAt,
       breakdowns: buildBreakdowns(reportOrders, { from, to }),
       previousAvgProcessingHours: previousBreakdowns.avgProcessingHours,

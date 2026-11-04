@@ -80,7 +80,7 @@ export default async function BillingPage({ params }: { params: Promise<{ shopId
       <PlanCards b={b} />
 
       <p className="text-sm text-slate-500">
-        Новый аккаунт получает {b.trialDays} дня бесплатно со всеми функциями. Оплата помесячно, переводом; после оплаты доступ продлевается
+        Новый аккаунт получает {b.trialDays} дней бесплатно со всеми функциями. Оплата помесячно, переводом; после оплаты доступ продлевается
         вручную в течение дня.
       </p>
     </div>

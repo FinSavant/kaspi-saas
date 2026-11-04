@@ -2,9 +2,8 @@ import type { Breakdowns, ProductRow, ReportTotals, SalesReport } from '@kaspi/c
 import { HelpTip } from '@/components/HelpTip';
 import { TIPS } from '@/lib/tips';
 import Link from 'next/link';
-import { ProfitStructureChart } from '@/components/ProfitStructureChart';
 import { ShopTabs } from '@/components/ShopTabs';
-import { SimpleLineChart } from '@/components/SimpleLineChart';
+import { AreaTrendChart, DonutChart, RevenueBarsChart } from '@/components/charts';
 import { api } from '@/lib/api';
 import { CommissionForm, ExpensesForm, FeesForm, SyncOrdersButton } from './forms';
 import {
@@ -29,6 +28,8 @@ interface AnalyticsResponse {
   period: string;
   from: string;
   to: string;
+  previousFrom: string;
+  previousTo: string;
   ordersSyncedAt: string | null;
   syncing: boolean;
   ordersWithoutItems: number;
@@ -51,6 +52,8 @@ interface AnalyticsResponse {
 const PRESETS = [
   { key: 'today', label: 'Сегодня' },
   { key: 'yesterday', label: 'Вчера' },
+  { key: 'month', label: 'Тек. месяц' },
+  { key: 'prevmonth', label: 'Пред. месяц' },
   { key: '7', label: '7 дн' },
   { key: '30', label: '30 дн' },
   { key: '90', label: '90 дн' },
@@ -73,7 +76,7 @@ const formatDate = (iso: string) =>
 const almatyDate = (iso: string) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Almaty' });
 const hours = (h: number | null) => (h === null ? '—' : `${h.toLocaleString('ru-RU')} ч`);
 
-type Search = { period?: string; from?: string; to?: string; tab?: string; sort?: string; only?: string };
+type Search = { period?: string; from?: string; to?: string; tab?: string; sort?: string; only?: string; compare?: string };
 
 export default async function AnalyticsPage({
   params,
@@ -95,7 +98,9 @@ export default async function AnalyticsPage({
   const prev = data.previous;
   const b = data.breakdowns;
   const base = `/shops/${shopId}/analytics`;
-  const periodQuery = custom ? `from=${search.from}&to=${search.to}` : `period=${data.period}`;
+  const compare = search.compare === '1';
+  const periodOnly = custom ? `from=${search.from}&to=${search.to}` : `period=${data.period}`;
+  const periodQuery = periodOnly + (compare ? '&compare=1' : '');
   // Сортировка и фильтр таблиц товаров — во вкладках «Товары» и «В пути»
   const sort = PRODUCT_SORTS.some((s) => s.key === search.sort) ? search.sort! : 'revenue';
   const only = PRODUCT_FILTERS.some((f) => f.key === search.only) ? search.only! : '';
@@ -107,7 +112,7 @@ export default async function AnalyticsPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
+            <h1 className="bg-gradient-to-r from-slate-900 to-blue-700 bg-clip-text text-3xl font-bold tracking-tight text-transparent">Аналитика</h1>
             <HelpTip {...TIPS.analytics} />
           </div>
           {/* Период, вкладка, сортировка и фильтр сохраняются при переключении */}
@@ -120,12 +125,12 @@ export default async function AnalyticsPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SyncOrdersButton shopId={shopId} syncing={data.syncing} />
-          <nav className="flex flex-wrap rounded-lg border border-slate-200 bg-white p-1 text-sm">
+          <nav className="flex flex-wrap rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-sm">
             {PRESETS.map((p) => (
               <Link
                 key={p.key}
-                href={`${base}?period=${p.key}&tab=${tab}`}
-                className={`whitespace-nowrap rounded-md px-3 py-1 ${!custom && data.period === p.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                href={`${base}?period=${p.key}&tab=${tab}${compare ? '&compare=1' : ''}`}
+                className={`whitespace-nowrap rounded-md px-3 py-1 ${!custom && data.period === p.key ? 'bg-slate-900 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}
               >
                 {p.label}
               </Link>
@@ -133,6 +138,7 @@ export default async function AnalyticsPage({
           </nav>
           <form action={base} className="flex flex-wrap items-center gap-1 text-sm">
             <input type="hidden" name="tab" value={tab} />
+            {compare && <input type="hidden" name="compare" value="1" />}
             <input type="date" name="from" defaultValue={almatyDate(data.from)} className="rounded border border-slate-300 bg-white px-2 py-1" aria-label="С" />
             <span className="text-slate-400">—</span>
             <input type="date" name="to" defaultValue={almatyDate(data.to)} className="rounded border border-slate-300 bg-white px-2 py-1" aria-label="По" />
@@ -171,17 +177,79 @@ export default async function AnalyticsPage({
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Link
+          href={`${base}?${periodOnly}&tab=${tab}${compare ? '' : '&compare=1'}`}
+          className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${compare ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+        >
+          {compare ? '✓ Сравнение с предыдущим периодом' : 'Сравнить с предыдущим периодом'}
+        </Link>
+        {compare && (
+          <span className="text-xs text-slate-500">
+            {almatyDate(data.from)} — {almatyDate(data.to)} против {almatyDate(data.previousFrom)} — {almatyDate(data.previousTo)}
+          </span>
+        )}
+      </div>
+
+      {compare && (
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-semibold tracking-wide text-slate-500 uppercase">
+              <tr>
+                <th className="px-3 py-2">Показатель</th>
+                <th className="px-3 py-2 text-right">Этот период</th>
+                <th className="px-3 py-2 text-right">Предыдущий</th>
+                <th className="px-3 py-2 text-right">Разница</th>
+                <th className="px-3 py-2 text-right">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(
+                [
+                  ['Продано, шт (SKU)', totals.units, prev.units, false],
+                  ['Заказы', totals.orders, prev.orders, false],
+                  ['Выручка', totals.revenue, prev.revenue, true],
+                  ['Средний чек', totals.avgCheck, prev.avgCheck, true],
+                  ['Чистая прибыль', totals.netProfit, prev.netProfit, true],
+                ] as [string, number, number, boolean][]
+              ).map(([label, now, before, money]) => {
+                const fmt = (v: number) => (money ? tenge(v) : v.toLocaleString('ru-RU'));
+                const diff = now - before;
+                return (
+                  <tr key={label} className="border-t border-slate-100 even:bg-slate-50/60 hover:bg-blue-50/40">
+                    <td className="px-3 py-2 font-medium">{label}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmt(now)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{fmt(before)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-red-600' : 'text-slate-500'}`}>
+                      {diff > 0 ? '+' : ''}
+                      {fmt(diff)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Delta now={now} before={before} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Tile label="Выручка" value={tenge(totals.revenue)} delta={<Delta now={totals.revenue} before={prev.revenue} />} />
-        <Tile label="Заказы" value={totals.orders.toLocaleString('ru-RU')} delta={<Delta now={totals.orders} before={prev.orders} />} />
-        <Tile label="Средний чек" value={tenge(totals.avgCheck)} delta={<Delta now={totals.avgCheck} before={prev.avgCheck} />} />
+        <Tile label="Выручка" icon="money" accent="blue" value={tenge(totals.revenue)} delta={<Delta now={totals.revenue} before={prev.revenue} />} />
+        <Tile label="Заказы" icon="orders" accent="violet" value={totals.orders.toLocaleString('ru-RU')} delta={<Delta now={totals.orders} before={prev.orders} />} />
+        <Tile label="Средний чек" icon="check" accent="sky" value={tenge(totals.avgCheck)} delta={<Delta now={totals.avgCheck} before={prev.avgCheck} />} />
         <Tile
           label="Возвраты / Отмены"
+          icon="cancel"
+          accent="rose"
           value={pct(totals.cancelRatePercent)}
           delta={<Delta now={totals.cancelRatePercent} before={prev.cancelRatePercent} inverse />}
         />
         <Tile
           label="Ср. время до передачи курьеру"
+          icon="clock"
+          accent="amber"
           value={hours(b.avgProcessingHours)}
           delta={<Delta now={b.avgProcessingHours} before={data.previousAvgProcessingHours} inverse />}
         />
@@ -203,12 +271,12 @@ export default async function AnalyticsPage({
         </span>
       </Link>
 
-      <nav className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm">
+      <nav className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 text-sm shadow-sm">
         {TABS.map((t) => (
           <Link
             key={t.key}
             href={`${base}?${periodQuery}&tab=${t.key}`}
-            className={`whitespace-nowrap rounded-lg px-3 py-1.5 ${tab === t.key ? 'bg-emerald-600 font-medium text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+            className={`whitespace-nowrap rounded-xl px-3.5 py-2 transition ${tab === t.key ? 'bg-gradient-to-r from-blue-600 to-sky-500 font-semibold text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}
           >
             {t.label}
           </Link>
@@ -218,14 +286,13 @@ export default async function AnalyticsPage({
       {tab === 'overview' && (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <Card title="Динамика выручки">
-              <SimpleLineChart
+            <Card title="Динамика выручки и прибыли">
+              <AreaTrendChart
                 xKey="date"
-                unit=" ₸"
                 data={byDay.map((d) => ({ date: `${d.date.slice(8, 10)}.${d.date.slice(5, 7)}`, revenue: d.revenue, netProfit: d.netProfit }))}
-                lines={[
+                series={[
                   { key: 'revenue', name: 'Выручка', color: '#2563eb' },
-                  { key: 'netProfit', name: 'Чистая прибыль', color: '#059669' },
+                  { key: 'netProfit', name: 'Чистая прибыль', color: '#10b981' },
                 ]}
               />
             </Card>
@@ -241,15 +308,10 @@ export default async function AnalyticsPage({
           title="Выручка по периодам"
           footer={`Группировка: ${{ day: 'по дням', week: 'по неделям (с понедельника)', month: 'по месяцам' }[b.revenueByPeriod.granularity]}.`}
         >
-          <SimpleLineChart
-            xKey="label"
-            unit=" ₸"
-            data={b.revenueByPeriod.rows.map((r) => ({ label: r.label, revenue: r.revenue }))}
-            lines={[{ key: 'revenue', name: 'Выручка', color: '#2563eb' }]}
-          />
+          <RevenueBarsChart xKey="label" data={b.revenueByPeriod.rows.map((r) => ({ label: r.label, revenue: r.revenue, orders: r.orders }))} />
           <table className="mt-4 w-full text-sm">
             <thead>
-              <tr className="text-xs text-slate-500">
+              <tr className="text-xs tracking-wide text-slate-400 uppercase">
                 {['Период', 'Заказы', 'Выручка', 'Ср. чек', 'Изменение'].map((h) => (
                   <th key={h} className="pb-2 pr-3 text-right font-medium first:text-left">
                     {h}
@@ -259,7 +321,7 @@ export default async function AnalyticsPage({
             </thead>
             <tbody>
               {[...b.revenueByPeriod.rows].reverse().map((r) => (
-                <tr key={r.start} className="border-t border-slate-200">
+                <tr key={r.start} className="border-t border-slate-100 even:bg-slate-50/60 hover:bg-blue-50/40">
                   <td className="py-2 pr-3">{r.label}</td>
                   <td className="py-2 pr-3 text-right tabular-nums">{r.orders}</td>
                   <td className="py-2 pr-3 text-right tabular-nums">{tenge(r.revenue)}</td>
@@ -293,10 +355,10 @@ export default async function AnalyticsPage({
       {tab === 'delivery' && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="Расходы на доставку" value={tenge(b.delivery.cost)} />
-            <Tile label="% от выручки" value={pct(b.delivery.percentOfRevenue)} />
-            <Tile label="Экспресс-заказы" value={b.delivery.expressOrders.toLocaleString('ru-RU')} />
-            <Tile label="Kaspi Доставка" value={b.delivery.kaspiDeliveryOrders.toLocaleString('ru-RU')} />
+            <Tile label="Расходы на доставку" icon="truck" accent="rose" value={tenge(b.delivery.cost)} />
+            <Tile label="% от выручки" icon="percent" accent="amber" value={pct(b.delivery.percentOfRevenue)} />
+            <Tile label="Экспресс-заказы" icon="clock" accent="violet" value={b.delivery.expressOrders.toLocaleString('ru-RU')} />
+            <Tile label="Kaspi Доставка" icon="truck" accent="sky" value={b.delivery.kaspiDeliveryOrders.toLocaleString('ru-RU')} />
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <Card title="По типу доставки">
@@ -318,22 +380,23 @@ export default async function AnalyticsPage({
       {tab === 'profit' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Tile label="Чистая прибыль" value={tenge(totals.netProfit)} tone="good" delta={<Delta now={totals.netProfit} before={prev.netProfit} />} />
-            <Tile label="Маржинальность" value={pct(totals.marginPercent)} />
-            <Tile label="Покрытие себестоимостью" value={pct(totals.costCoveragePercent)} />
+            <Tile label="Чистая прибыль" icon="profit" value={tenge(totals.netProfit)} tone="good" delta={<Delta now={totals.netProfit} before={prev.netProfit} />} />
+            <Tile label="Маржинальность" icon="percent" accent="violet" value={pct(totals.marginPercent)} />
+            <Tile label="Покрытие себестоимостью" icon="box" accent="amber" value={pct(totals.costCoveragePercent)} />
           </div>
           <Card title="Структура прибыли">
-            <ProfitStructureChart
-              data={[
-                { label: 'Выручка', value: totals.revenue, kind: 'revenue' },
-                { label: 'Себест-ть', value: -totals.costOfGoods, kind: 'expense' },
-                { label: 'Комиссия', value: -totals.commission, kind: 'expense' },
-                { label: 'НДС комиссии', value: -totals.commissionVat, kind: 'expense' },
-                { label: 'Kaspi Pay', value: -totals.paymentFee, kind: 'expense' },
-                ...(totals.tax ? [{ label: 'Налог', value: -totals.tax, kind: 'expense' as const }] : []),
-                ...(totals.expenses ? [{ label: 'Свои расходы', value: -totals.expenses, kind: 'expense' as const }] : []),
-                { label: 'Доставка', value: -totals.delivery, kind: 'expense' },
-                { label: 'Прибыль', value: totals.netProfit, kind: 'profit' },
+            <DonutChart
+              centerLabel="Выручка"
+              centerValue={tenge(totals.revenue)}
+              items={[
+                { label: 'Себестоимость', value: totals.costOfGoods, color: '#f59e0b' },
+                { label: 'Комиссия Kaspi', value: totals.commission, color: '#2563eb' },
+                { label: 'НДС комиссии', value: totals.commissionVat, color: '#0ea5e9' },
+                { label: 'Kaspi Pay', value: totals.paymentFee, color: '#7c3aed' },
+                { label: 'Налог', value: totals.tax, color: '#94a3b8' },
+                { label: 'Свои расходы', value: totals.expenses, color: '#ec4899' },
+                { label: 'Доставка', value: totals.delivery, color: '#f43f5e' },
+                { label: 'Чистая прибыль', value: Math.max(totals.netProfit, 0), color: '#10b981' },
               ]}
             />
           </Card>
@@ -415,12 +478,13 @@ export default async function AnalyticsPage({
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <Card title="Тренд отмен и возвратов">
-              <SimpleLineChart
+              <AreaTrendChart
                 xKey="date"
+                unit=""
                 data={b.cancellationsByDay.map((d) => ({ date: `${d.date.slice(8, 10)}.${d.date.slice(5, 7)}`, cancelled: d.cancelled, total: d.total }))}
-                lines={[
+                series={[
                   { key: 'total', name: 'Все заказы', color: '#94a3b8' },
-                  { key: 'cancelled', name: 'Отмены и возвраты', color: '#dc2626' },
+                  { key: 'cancelled', name: 'Отмены и возвраты', color: '#f43f5e' },
                 ]}
               />
             </Card>
