@@ -29,7 +29,7 @@ export const HEADERS: { key: ColumnKey; label: string; className: string }[] = [
   { key: 'stores', label: 'Склад · наличие · остаток', className: 'w-40 text-right text-slate-700' },
   { key: 'position', label: 'Позиция', className: 'w-28 text-center text-slate-700' },
   { key: 'cost', label: 'Себестоимость', className: `w-28 ${COL.cost} text-right text-rose-800` },
-  { key: 'markup', label: 'Мин. цена + %', className: `w-28 ${COL.cost} text-right text-rose-800` },
+  { key: 'markup', label: 'Себестоимость + %', className: `w-28 ${COL.cost} text-right text-rose-800` },
   { key: 'floor', label: 'Мин. цена', className: `w-28 ${COL.bot} text-right text-amber-900` },
   { key: 'ceiling', label: 'Макс. цена', className: `w-28 ${COL.bot} text-right text-amber-900` },
   { key: 'step', label: 'Шаг', className: `w-28 ${COL.bot} text-right text-amber-900` },

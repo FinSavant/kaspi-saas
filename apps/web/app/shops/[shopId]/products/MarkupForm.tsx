@@ -4,7 +4,7 @@ import { useActionState, type FocusEvent } from 'react';
 import { saveMarkups, type SaveState } from './actions';
 
 /**
- * Один процент наценки для колонки «Мин. цена + %» — в шапке колонки. Продавец вводит любое
+ * Один процент наценки для колонки «Себестоимость + %» — в шапке колонки. Продавец вводит любое
  * целое число вручную; сохраняется при уходе с поля, цены в колонке пересчитываются.
  */
 export function MarkupForm({ shopId, percent }: { shopId: string; percent: number }) {
@@ -16,10 +16,10 @@ export function MarkupForm({ shopId, percent }: { shopId: string; percent: numbe
     <form
       action={action}
       className="flex flex-col items-end gap-1 font-normal normal-case"
-      title="Минимальная цена, при которой прибыль не меньше этого процента от цены. Введите число — цены в колонке пересчитаются сами."
+      title="Себестоимость плюс ваш процент прибыли, с учётом комиссии Kaspi, налога и доставки. Справочная цена: если «Мин. цена» ниже, строка подсвечивается. Робот ориентируется на «Мин. цену»."
     >
       <input type="hidden" name="shopId" value={shopId} />
-      <span className="font-bold uppercase">Мин. цена +</span>
+      <span className="font-bold uppercase">Себестоимость +</span>
       <span className="flex items-center gap-0.5 text-sm">
         +
         <input
@@ -34,6 +34,7 @@ export function MarkupForm({ shopId, percent }: { shopId: string; percent: numbe
         />
         %
       </span>
+      <span className="text-[10px] font-normal text-slate-500">цена не ниже</span>
       {pending && <span className="text-[11px] text-slate-400">сохраняю…</span>}
       {state.error && <span className="max-w-40 text-[11px] text-red-600">{state.error}</span>}
     </form>
