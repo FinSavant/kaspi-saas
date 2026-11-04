@@ -44,12 +44,12 @@ export interface ProductView {
   } | null;
 }
 
-const INPUT = 'ml-auto block w-full max-w-[80px] rounded border bg-white px-1.5 py-1 text-right tabular-nums';
+const INPUT = 'ml-auto block w-full max-w-[80px] rounded border bg-white px-1 py-1 text-right text-xs tabular-nums xl:px-1.5 xl:text-sm';
 
 /** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
 const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
 
-const PILL ='inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap';
+const PILL = 'inline-flex items-center justify-center gap-1 rounded-full px-2 py-1 text-center text-[11px] leading-tight font-semibold xl:px-2.5 xl:text-xs';
 
 /**
  * Позиция по цене в карточке, как в Okto: «Топ 1» зелёная плашка, «Ниже №1» красная
@@ -140,7 +140,7 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
       </td>
-      <td className={`${v('price')} ${COL.price} px-1.5 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
+      <td className={`${v('price')} ${COL.price} px-1 py-2 text-right text-sm font-bold whitespace-nowrap text-sky-800 tabular-nums xl:px-1.5 xl:text-base`}>
         <PriceEdit shopId={shopId} productId={product.id} price={product.price} />
         {/* Как в Okto: под нашей ценой — цена первого места, если мы не первые */}
         {product.position !== null && product.position > 1 && product.topCompetitorPrice !== null && (

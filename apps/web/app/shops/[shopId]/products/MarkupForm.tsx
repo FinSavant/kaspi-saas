@@ -19,7 +19,7 @@ export function MarkupForm({ shopId, percent }: { shopId: string; percent: numbe
       title="Только для ориентира: себестоимость плюс ваш процент. Робот опирается на колонку «Мин. цена»."
     >
       <input type="hidden" name="shopId" value={shopId} />
-      <span className="font-bold uppercase">Себестоимость +</span>
+      <span className="text-[9px] font-bold tracking-tight uppercase min-[1400px]:text-[11px]">Себестоимость +</span>
       <span className="flex items-center gap-0.5 text-sm">
         +
         <input
