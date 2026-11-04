@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 import { addShop, cabinetLogin, chatLogin, sendReportNow, type CabinetState, type ChatLoginState, type ShopFormState } from './actions';
 
 const INPUT = 'w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm';
@@ -95,8 +95,9 @@ export function ReportNowButton({ shopId }: { shopId: string }) {
 }
 
 /** Вход в кабинет Kaspi: логин и пароль (можно оставить сохранённые), затем код из почты, если Kaspi его пришлёт. */
-export function CabinetLoginForm({ shopId, hasSavedLogin }: { shopId: string; hasSavedLogin: boolean }) {
+export function CabinetLoginForm({ shopId, hasSavedLogin, savedPhone }: { shopId: string; hasSavedLogin: boolean; savedPhone?: string | null }) {
   const [state, action, pending] = useActionState<CabinetState, FormData>(cabinetLogin, {});
+  const [method, setMethod] = useState<'email' | 'phone'>(savedPhone ? 'phone' : 'email');
 
   if (state.status === 'OK') {
     return <p className="text-sm text-emerald-700">Вход выполнен. Товаров в продаже: {state.offers}. Теперь их можно синхронизировать в разделе «Робот».</p>;
@@ -105,7 +106,29 @@ export function CabinetLoginForm({ shopId, hasSavedLogin }: { shopId: string; ha
   return (
     <form action={action} className="space-y-3">
       <input type="hidden" name="shopId" value={shopId} />
-      {state.status === 'MFA_REQUIRED' ? (
+      <input type="hidden" name="method" value={method} />
+      {state.status !== 'MFA_REQUIRED' && state.status !== 'SMS_SENT' && (
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-1">
+            <input type="radio" checked={method === 'email'} onChange={() => setMethod('email')} /> По почте и паролю
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" checked={method === 'phone'} onChange={() => setMethod('phone')} /> По номеру телефона
+          </label>
+        </div>
+      )}
+      {state.status === 'SMS_SENT' ? (
+        <Field label={`Код из SMS на ${state.sentTo}`}>
+          <input name="code" required autoComplete="one-time-code" inputMode="numeric" className={INPUT} />
+        </Field>
+      ) : method === 'phone' ? (
+        <Field
+          label="Номер телефона пользователя кабинета"
+          hint={savedPhone ? `Сейчас подключён ${savedPhone}. Оставьте пустым, чтобы получить SMS на него.` : 'Номер, по которому вы входите в кабинет Kaspi. Код придёт в SMS.'}
+        >
+          <input name="phone" type="tel" required={!savedPhone} placeholder="+7 7__ ___ __ __" className={INPUT} />
+        </Field>
+      ) : state.status === 'MFA_REQUIRED' ? (
         <Field label={`Код из письма Kaspi на ${state.email}`}>
           <input name="code" required autoComplete="one-time-code" inputMode="numeric" className={INPUT} />
         </Field>
@@ -122,7 +145,13 @@ export function CabinetLoginForm({ shopId, hasSavedLogin }: { shopId: string; ha
       )}
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
       <button type="submit" disabled={pending} className={BUTTON}>
-        {pending ? 'Вхожу…' : state.status === 'MFA_REQUIRED' ? 'Подтвердить код' : 'Войти в кабинет'}
+        {pending
+          ? 'Вхожу…'
+          : state.status === 'MFA_REQUIRED' || state.status === 'SMS_SENT'
+            ? 'Подтвердить код'
+            : method === 'phone'
+              ? 'Получить SMS'
+              : 'Войти в кабинет'}
       </button>
     </form>
   );

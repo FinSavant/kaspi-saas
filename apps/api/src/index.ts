@@ -311,7 +311,8 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/settings', async (reques
     hasChatSession: !!shop.chatSessionEnc,
     chatPhone: shop.chatPhone ? `+7 ${shop.chatPhone.slice(0, 3)} ***-**-${shop.chatPhone.slice(-2)}` : null,
     // Свои логин и пароль магазина или общие из .env — тогда войти можно без ввода
-    hasCabinetLogin: !!(shop.mcLoginEnc && shop.mcPasswordEnc) || !!(process.env.KASPI_MC_LOGIN && process.env.KASPI_MC_PASSWORD),
+    hasCabinetLogin: !!(shop.mcLoginEnc && shop.mcPasswordEnc) || (await canUseSharedCabinetLogin(shop.id)),
+    cabinetPhone: shop.mcPhone ? `+7 ${shop.mcPhone.slice(0, 3)} ***-**-${shop.mcPhone.slice(-2)}` : null,
     productsSyncedAt: shop.productsSyncedAt,
     ordersSyncedAt: shop.ordersSyncedAt,
     repricerEnabled: shop.repricerEnabled,
@@ -598,18 +599,27 @@ async function saveCabinetSession(shopId: string, client: KaspiCabinetClient) {
   await prisma.shop.update({ where: { id: shopId }, data: { mcSessionEnc: encryptSecret(client.jar.toJSON(), encryptionKey()) } });
 }
 
-/** Сессия даёт доступ к товарам — значит, вход удался. */
-async function finishCabinetLogin(shop: { id: string; merchantId: string }, client: KaspiCabinetClient) {
+/** Сессия даёт доступ к товарам — значит, вход удался. `phone` — вход по номеру (пароля нет). */
+async function finishCabinetLogin(shop: { id: string; merchantId: string }, client: KaspiCabinetClient, phone: string | null = null) {
   await saveCabinetSession(shop.id, client);
   const offers = await client.listActiveOffers(shop.merchantId);
   await saveCabinetSession(shop.id, client);
+  await prisma.shop.update({ where: { id: shop.id }, data: { mcPhone: phone } });
   return { status: 'OK' as const, offers: offers.length };
+}
+
+/** Общие логин и пароль из .env — только для магазинов владельца платформы (администратора). */
+async function canUseSharedCabinetLogin(shopId: string): Promise<boolean> {
+  if (!process.env.KASPI_MC_LOGIN || !process.env.KASPI_MC_PASSWORD) return false;
+  return (await prisma.shop.count({ where: { id: shopId, owner: { isAdmin: true } } })) > 0;
 }
 
 const cabinetError = (error: unknown) =>
   error instanceof KaspiCabinetAuthError
     ? 'Kaspi не пустил в кабинет: проверьте логин и пароль.'
-    : `Не удалось войти в кабинет Kaspi: ${error instanceof Error ? error.message : String(error)}`;
+    : error instanceof Error && error.message.startsWith('Kaspi не принял')
+      ? error.message
+      : `Не удалось войти в кабинет Kaspi: ${error instanceof Error ? error.message : String(error)}`;
 
 /** Вход в кабинет продавца. Новые логин и пароль сохраняются; без них берутся сохранённые. */
 app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string } }>(
@@ -628,7 +638,7 @@ app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string
     } else if (shop.mcLoginEnc && shop.mcPasswordEnc) {
       login = decryptSecret(shop.mcLoginEnc, key);
       password = decryptSecret(shop.mcPasswordEnc, key);
-    } else {
+    } else if (await canUseSharedCabinetLogin(shop.id)) {
       login = process.env.KASPI_MC_LOGIN ?? '';
       password = process.env.KASPI_MC_PASSWORD ?? '';
     }
@@ -648,6 +658,48 @@ app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string
     }
   },
 );
+
+// Начатые входы в кабинет по номеру телефона, ждущие код из SMS
+const pendingCabinetPhoneLogins = new Map<string, { client: KaspiCabinetClient; phone: string; startedAt: number }>();
+
+/** Вход в кабинет (товары, робот) по номеру телефона: шаг 1 — Kaspi шлёт SMS. */
+app.post<{ Params: { shopId: string }; Body: { phone?: string } }>('/shops/:shopId/cabinet/phone', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const phone = trimmed(request.body?.phone) || shop.mcPhone || '';
+  const client = new KaspiCabinetClient();
+  try {
+    const sentTo = await client.startPhoneLogin(phone);
+    pendingCabinetPhoneLogins.set(shop.id, { client, phone: phone.replace(/\D/g, '').slice(-10), startedAt: Date.now() });
+    return { status: 'SMS_SENT', sentTo };
+  } catch (error) {
+    request.log.warn({ trace: client.trace }, 'cabinet phone login failed');
+    return reply.code(400).send({ error: `Kaspi не отправил SMS: ${error instanceof Error ? error.message : error}` });
+  }
+});
+
+/** Шаг 2: код из SMS. Сессию сохраняем и проверяем чтением товаров. */
+app.post<{ Params: { shopId: string }; Body: { code?: string } }>('/shops/:shopId/cabinet/phone-code', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const pending = pendingCabinetPhoneLogins.get(shop.id);
+  if (!pending || Date.now() - pending.startedAt > PENDING_LOGIN_TTL_MS) {
+    pendingCabinetPhoneLogins.delete(shop.id);
+    return reply.code(400).send({ error: 'Вход устарел — запросите SMS ещё раз.' });
+  }
+  const code = trimmed(request.body?.code);
+  if (!code) return reply.code(400).send({ error: 'Введите код из SMS.' });
+  try {
+    const result = await pending.client.submitSmsCode(code, shop.merchantId);
+    if (result.status !== 'OK') return reply.code(400).send({ error: 'Kaspi запросил дополнительное подтверждение.' });
+    const done = await finishCabinetLogin(shop, pending.client, pending.phone);
+    pendingCabinetPhoneLogins.delete(shop.id);
+    return done;
+  } catch (error) {
+    request.log.warn({ trace: pending.client.trace }, 'cabinet sms code failed');
+    return reply.code(400).send({ error: cabinetError(error) });
+  }
+});
 
 // Начатые входы по телефону для чата, ждущие код из SMS (как pendingCabinetLogins)
 const pendingChatLogins = new Map<string, { client: KaspiCabinetClient; phone: string; startedAt: number }>();

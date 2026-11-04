@@ -68,8 +68,9 @@ export async function chatLogin(prev: ChatLoginState, formData: FormData): Promi
 }
 
 export interface CabinetState {
-  status?: 'OK' | 'MFA_REQUIRED';
+  status?: 'OK' | 'MFA_REQUIRED' | 'SMS_SENT';
   email?: string;
+  sentTo?: string;
   offers?: number;
   error?: string;
 }
@@ -81,6 +82,18 @@ export async function cabinetLogin(prev: CabinetState, formData: FormData): Prom
   const shopId = String(formData.get('shopId'));
   try {
     const code = String(formData.get('code') ?? '').trim();
+    if (formData.get('method') === 'phone') {
+      // Вход по номеру: шаг 1 — номер (Kaspi шлёт SMS), шаг 2 — код
+      const result =
+        prev.status === 'SMS_SENT' && code
+          ? await api<CabinetResponse>(`/shops/${shopId}/cabinet/phone-code`, { method: 'POST', body: { code } })
+          : await api<{ status: 'SMS_SENT'; sentTo: string }>(`/shops/${shopId}/cabinet/phone`, {
+              method: 'POST',
+              body: { phone: String(formData.get('phone') ?? '') },
+            });
+      revalidatePath(`/shops/${shopId}/settings`);
+      return result;
+    }
     const result =
       prev.status === 'MFA_REQUIRED' && code
         ? await api<CabinetResponse>(`/shops/${shopId}/cabinet/code`, { method: 'POST', body: { code } })
@@ -92,6 +105,6 @@ export async function cabinetLogin(prev: CabinetState, formData: FormData): Prom
     return result;
   } catch (error) {
     // Ошибка на шаге кода не сбрасывает его: можно ввести код ещё раз
-    return { ...(prev.status === 'MFA_REQUIRED' ? prev : {}), error: error instanceof Error ? error.message : 'Не удалось войти.' };
+    return { ...(prev.status === 'MFA_REQUIRED' || prev.status === 'SMS_SENT' ? prev : {}), error: error instanceof Error ? error.message : 'Не удалось войти.' };
   }
 }

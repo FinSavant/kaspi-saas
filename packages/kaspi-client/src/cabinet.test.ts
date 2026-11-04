@@ -322,7 +322,7 @@ describe('KaspiCabinetClient', () => {
       .mockResolvedValueOnce(response({ code: 'CREDENTIALS_INVALID' }, { status: 400 }));
     const client = new KaspiCabinetClient(new CookieJar(), fetchImpl, URLS);
 
-    await expect(client.login('u', 'wrong', '1')).rejects.toThrow('CREDENTIALS_INVALID');
+    await expect(client.login('u', 'wrong', '1')).rejects.toThrow('Kaspi не принял логин или пароль');
   });
 
   it('refreshes the cabinet session without a password while the login service remembers the user', async () => {
