@@ -111,7 +111,7 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
       <td className="py-2 pl-2">
         <RowCheckbox id={product.id} />
       </td>
-      <td className="max-w-[200px] px-1.5 py-2">
+      <td className="px-1.5 py-2">
         <form id={formId} ref={formRef} action={action}>
           <input type="hidden" name="shopId" value={shopId} />
           <input type="hidden" name="productId" value={product.id} />
@@ -120,22 +120,22 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
         <div className="flex items-center gap-2">
           {product.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- фото с CDN Kaspi, без оптимизации Next
-            <img src={product.imageUrl} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
+            <img src={product.imageUrl} alt="" loading="lazy" className="h-11 w-11 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
           ) : (
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">📦</div>
           )}
           {shopUrl(product) ? (
             <a
               href={shopUrl(product)!}
               target="_blank"
               rel="noreferrer"
-              title="Открыть карточку на kaspi.kz"
-              className="text-[13px] leading-tight font-medium text-slate-900 hover:text-sky-700 hover:underline"
+              title={`${product.name} — открыть карточку на kaspi.kz`}
+              className="line-clamp-2 min-w-0 text-[13px] leading-tight font-medium text-slate-900 hover:text-sky-700 hover:underline"
             >
               {product.name} <span className="text-xs text-slate-400">↗</span>
             </a>
           ) : (
-            <span className="text-[13px] leading-tight font-medium text-slate-900">{product.name}</span>
+            <span className="line-clamp-2 min-w-0 text-[13px] leading-tight font-medium text-slate-900" title={product.name}>{product.name}</span>
           )}
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}

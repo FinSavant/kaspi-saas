@@ -30,7 +30,7 @@ export function MarkupForm({ shopId, percent }: { shopId: string; percent: numbe
           onBlur={saveIfChanged}
           placeholder="5"
           aria-label="Процент наценки к минимальной цене"
-          className="w-20 rounded border border-rose-300 bg-white px-1.5 py-1 text-right font-semibold text-rose-800 tabular-nums"
+          className="w-12 rounded border border-rose-300 bg-white px-1.5 py-1 text-right font-semibold text-rose-800 tabular-nums"
         />
         %
       </span>
