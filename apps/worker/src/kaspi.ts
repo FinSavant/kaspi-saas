@@ -24,13 +24,19 @@ interface CabinetShop {
   mcSessionEnc: string | null;
   mcLoginEnc: string | null;
   mcPasswordEnc: string | null;
+  mcPhone?: string | null;
 }
 
-/** Логин и пароль кабинета: свои у магазина, иначе общие из .env. */
-function cabinetCredentials(shop: CabinetShop): { login: string; password: string } | null {
+/**
+ * Логин и пароль кабинета: свои у магазина. Общие из .env подставляются только магазинам
+ * владельца платформы (администратора) — чужим магазинам их не отдаём.
+ */
+async function cabinetCredentials(shop: CabinetShop): Promise<{ login: string; password: string } | null> {
   if (shop.mcLoginEnc && shop.mcPasswordEnc) {
     return { login: decryptSecret(shop.mcLoginEnc, encryptionKey()), password: decryptSecret(shop.mcPasswordEnc, encryptionKey()) };
   }
+  if (shop.mcPhone) return null;
+  if ((await prisma.shop.count({ where: { id: shop.id, owner: { isAdmin: true } } })) === 0) return null;
   const login = process.env.KASPI_MC_LOGIN;
   const password = process.env.KASPI_MC_PASSWORD;
   return login && password ? { login, password } : null;
@@ -57,7 +63,10 @@ export async function withCabinet<T>(shop: CabinetShop, action: (client: KaspiCa
   }
 
   if (!(await client.refreshSession())) {
-    const credentials = cabinetCredentials(shop);
+    const credentials = await cabinetCredentials(shop);
+    if (!credentials && shop.mcPhone) {
+      throw new Error('Сессия кабинета Kaspi истекла. Войдите заново по номеру телефона в Настройках → Кабинет продавца.');
+    }
     if (!credentials) throw new CabinetLoginRequiredError('Сессия кабинета Kaspi истекла.');
     const result = await client.login(credentials.login, credentials.password, shop.merchantId);
     await save();

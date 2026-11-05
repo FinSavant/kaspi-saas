@@ -15,6 +15,7 @@ interface ShopSettings {
   hasApiToken: boolean;
   hasCabinetSession: boolean;
   hasCabinetLogin: boolean;
+  cabinetPhone: string | null;
   hasChatSession: boolean;
   chatPhone: string | null;
   productsSyncedAt: string | null;
@@ -126,7 +127,7 @@ export default async function SettingsPage({
           Нужен для синхронизации товаров и робота. Используйте отдельного пользователя кабинета с правом «Загрузка
           товаров». Если Kaspi пришлёт код на почту, здесь появится поле для него.
         </p>
-        <CabinetLoginForm shopId={shopId} hasSavedLogin={s.hasCabinetLogin} />
+        <CabinetLoginForm shopId={shopId} hasSavedLogin={s.hasCabinetLogin} savedPhone={s.cabinetPhone} />
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">

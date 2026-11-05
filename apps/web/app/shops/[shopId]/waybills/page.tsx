@@ -1,6 +1,7 @@
 import { api } from '@/lib/api';
 import { HelpTip } from '@/components/HelpTip';
 import { TIPS } from '@/lib/tips';
+import { HandoverPanel } from './HandoverPanel';
 import { PrintForm, ReprintForm } from './PrintForm';
 
 export const dynamic = 'force-dynamic';
@@ -43,11 +44,13 @@ export default async function WaybillsPage({ params }: { params: Promise<{ shopI
             <HelpTip {...TIPS.waybills} />
           </div>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Склеиваются только заказы из вкладки «Передача», которые ещё не печатались. «Упаковка» и уже переданные
+            Склеиваются только заказы из вкладки «Передача», которые ещё не печатались. Заказы из «Упаковки» можно сначала передать кнопкой ниже; уже переданные
             в доставку не затрагиваются.
           </p>
         </div>
       </div>
+
+      <HandoverPanel shopId={shopId} />
 
       <PrintForm shopId={shopId} shops={shops} />
 

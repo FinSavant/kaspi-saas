@@ -48,7 +48,9 @@ import {
 import { prisma } from '@kaspi/db';
 import {
   buildPriceListXml,
+  describeHandoverError,
   isAwaitingHandover,
+  isAwaitingPacking,
   KaspiCabinetAuthError,
   KaspiCabinetClient,
   KaspiClient,
@@ -311,7 +313,8 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/settings', async (reques
     hasChatSession: !!shop.chatSessionEnc,
     chatPhone: shop.chatPhone ? `+7 ${shop.chatPhone.slice(0, 3)} ***-**-${shop.chatPhone.slice(-2)}` : null,
     // Свои логин и пароль магазина или общие из .env — тогда войти можно без ввода
-    hasCabinetLogin: !!(shop.mcLoginEnc && shop.mcPasswordEnc) || !!(process.env.KASPI_MC_LOGIN && process.env.KASPI_MC_PASSWORD),
+    hasCabinetLogin: !!(shop.mcLoginEnc && shop.mcPasswordEnc) || (await canUseSharedCabinetLogin(shop.id)),
+    cabinetPhone: shop.mcPhone ? `+7 ${shop.mcPhone.slice(0, 3)} ***-**-${shop.mcPhone.slice(-2)}` : null,
     productsSyncedAt: shop.productsSyncedAt,
     ordersSyncedAt: shop.ordersSyncedAt,
     repricerEnabled: shop.repricerEnabled,
@@ -333,14 +336,14 @@ app.get('/shops', async (request) =>
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
-const PRESETS = new Set(['today', 'yesterday', '7', '30', '90', '365']);
+const PRESETS = new Set(['today', 'yesterday', 'month', 'prevmonth', '7', '30', '90', '365']);
 
 /** Начало суток по Алматы (UTC+5) для даты YYYY-MM-DD. */
 const almatyDayStart = (date: string) => new Date(new Date(`${date}T00:00:00Z`).getTime() - ALMATY_OFFSET_MS);
 const almatyToday = () => new Date(Date.now() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
 
 /** Период аналитики: готовый пресет или свои даты (YYYY-MM-DD, включительно). */
-function resolvePeriod(query: { period?: string; from?: string; to?: string }): { from: Date; to: Date; key: string } | null {
+function resolvePeriod(query: { period?: string; from?: string; to?: string }): { from: Date; to: Date; key: string; previous?: { from: Date; to: Date } } | null {
   const isDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
   if (isDate(query.from) && isDate(query.to)) {
     const from = almatyDayStart(query.from!);
@@ -350,6 +353,19 @@ function resolvePeriod(query: { period?: string; from?: string; to?: string }): 
   const period = query.period ?? '30';
   if (!PRESETS.has(period)) return null;
   const todayStart = almatyDayStart(almatyToday());
+  if (period === 'month' || period === 'prevmonth') {
+    // Календарные месяцы по Алматы: текущий — с 1-го числа по сейчас, прошлый — целиком
+    const [y, m] = almatyToday().split('-').map(Number) as [number, number];
+    const monthStart = (offset: number) => almatyDayStart(new Date(Date.UTC(y, m - 1 + offset, 1)).toISOString().slice(0, 10));
+    if (period === 'month') {
+      const from = monthStart(0);
+      const to = new Date();
+      // Сравнение — те же дни прошлого месяца (1–4 ноября ↔ 1–4 октября)
+      const prevFrom = monthStart(-1);
+      return { from, to, key: period, previous: { from: prevFrom, to: new Date(Math.min(prevFrom.getTime() + (to.getTime() - from.getTime()), from.getTime() - 1)) } };
+    }
+    return { from: monthStart(-1), to: new Date(monthStart(0).getTime() - 1), key: period, previous: { from: monthStart(-2), to: new Date(monthStart(-1).getTime() - 1) } };
+  }
   if (period === 'today') return { from: todayStart, to: new Date(), key: period };
   if (period === 'yesterday') return { from: new Date(todayStart.getTime() - DAY_MS), to: new Date(todayStart.getTime() - 1), key: period };
   return { from: new Date(todayStart.getTime() - (Number(period) - 1) * DAY_MS), to: new Date(), key: period };
@@ -388,7 +404,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
 
     const { from, to } = range;
     const length = to.getTime() - from.getTime();
-    const previousFrom = new Date(from.getTime() - length - 1);
+    const previousFrom = range.previous?.from ?? new Date(from.getTime() - length - 1);
+    const previousTo = range.previous?.to ?? new Date(from.getTime() - 1);
 
     const include = { items: { include: { product: { select: { costPrice: true } } } } } as const;
     const [orders, openOrders, commissions, syncJob] = await Promise.all([
@@ -435,8 +452,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
     };
 
     const current = buildSalesReport(reportOrders, { from, to, ...fees });
-    const previous = buildSalesReport(reportOrders, { from: previousFrom, to: new Date(from.getTime() - 1), ...fees });
-    const previousBreakdowns = buildBreakdowns(reportOrders, { from: previousFrom, to: new Date(from.getTime() - 1) });
+    const previous = buildSalesReport(reportOrders, { from: previousFrom, to: previousTo, ...fees });
+    const previousBreakdowns = buildBreakdowns(reportOrders, { from: previousFrom, to: previousTo });
 
     // Нереализованная прибыль: все заказы в работе, независимо от периода
     const openReport = buildSalesReport(openOrders.map(toReportOrder), {
@@ -469,6 +486,8 @@ app.get<{ Params: { shopId: string }; Querystring: { period?: string; from?: str
       period: range.key,
       from,
       to,
+      previousFrom,
+      previousTo,
       ordersSyncedAt: shop.ordersSyncedAt,
       breakdowns: buildBreakdowns(reportOrders, { from, to }),
       previousAvgProcessingHours: previousBreakdowns.avgProcessingHours,
@@ -598,18 +617,27 @@ async function saveCabinetSession(shopId: string, client: KaspiCabinetClient) {
   await prisma.shop.update({ where: { id: shopId }, data: { mcSessionEnc: encryptSecret(client.jar.toJSON(), encryptionKey()) } });
 }
 
-/** Сессия даёт доступ к товарам — значит, вход удался. */
-async function finishCabinetLogin(shop: { id: string; merchantId: string }, client: KaspiCabinetClient) {
+/** Сессия даёт доступ к товарам — значит, вход удался. `phone` — вход по номеру (пароля нет). */
+async function finishCabinetLogin(shop: { id: string; merchantId: string }, client: KaspiCabinetClient, phone: string | null = null) {
   await saveCabinetSession(shop.id, client);
   const offers = await client.listActiveOffers(shop.merchantId);
   await saveCabinetSession(shop.id, client);
+  await prisma.shop.update({ where: { id: shop.id }, data: { mcPhone: phone } });
   return { status: 'OK' as const, offers: offers.length };
+}
+
+/** Общие логин и пароль из .env — только для магазинов владельца платформы (администратора). */
+async function canUseSharedCabinetLogin(shopId: string): Promise<boolean> {
+  if (!process.env.KASPI_MC_LOGIN || !process.env.KASPI_MC_PASSWORD) return false;
+  return (await prisma.shop.count({ where: { id: shopId, owner: { isAdmin: true } } })) > 0;
 }
 
 const cabinetError = (error: unknown) =>
   error instanceof KaspiCabinetAuthError
     ? 'Kaspi не пустил в кабинет: проверьте логин и пароль.'
-    : `Не удалось войти в кабинет Kaspi: ${error instanceof Error ? error.message : String(error)}`;
+    : error instanceof Error && error.message.startsWith('Kaspi не принял')
+      ? error.message
+      : `Не удалось войти в кабинет Kaspi: ${error instanceof Error ? error.message : String(error)}`;
 
 /** Вход в кабинет продавца. Новые логин и пароль сохраняются; без них берутся сохранённые. */
 app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string } }>(
@@ -628,7 +656,7 @@ app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string
     } else if (shop.mcLoginEnc && shop.mcPasswordEnc) {
       login = decryptSecret(shop.mcLoginEnc, key);
       password = decryptSecret(shop.mcPasswordEnc, key);
-    } else {
+    } else if (await canUseSharedCabinetLogin(shop.id)) {
       login = process.env.KASPI_MC_LOGIN ?? '';
       password = process.env.KASPI_MC_PASSWORD ?? '';
     }
@@ -648,6 +676,48 @@ app.post<{ Params: { shopId: string }; Body: { login?: string; password?: string
     }
   },
 );
+
+// Начатые входы в кабинет по номеру телефона, ждущие код из SMS
+const pendingCabinetPhoneLogins = new Map<string, { client: KaspiCabinetClient; phone: string; startedAt: number }>();
+
+/** Вход в кабинет (товары, робот) по номеру телефона: шаг 1 — Kaspi шлёт SMS. */
+app.post<{ Params: { shopId: string }; Body: { phone?: string } }>('/shops/:shopId/cabinet/phone', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const phone = trimmed(request.body?.phone) || shop.mcPhone || '';
+  const client = new KaspiCabinetClient();
+  try {
+    const sentTo = await client.startPhoneLogin(phone);
+    pendingCabinetPhoneLogins.set(shop.id, { client, phone: phone.replace(/\D/g, '').slice(-10), startedAt: Date.now() });
+    return { status: 'SMS_SENT', sentTo };
+  } catch (error) {
+    request.log.warn({ trace: client.trace }, 'cabinet phone login failed');
+    return reply.code(400).send({ error: `Kaspi не отправил SMS: ${error instanceof Error ? error.message : error}` });
+  }
+});
+
+/** Шаг 2: код из SMS. Сессию сохраняем и проверяем чтением товаров. */
+app.post<{ Params: { shopId: string }; Body: { code?: string } }>('/shops/:shopId/cabinet/phone-code', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const pending = pendingCabinetPhoneLogins.get(shop.id);
+  if (!pending || Date.now() - pending.startedAt > PENDING_LOGIN_TTL_MS) {
+    pendingCabinetPhoneLogins.delete(shop.id);
+    return reply.code(400).send({ error: 'Вход устарел — запросите SMS ещё раз.' });
+  }
+  const code = trimmed(request.body?.code);
+  if (!code) return reply.code(400).send({ error: 'Введите код из SMS.' });
+  try {
+    const result = await pending.client.submitSmsCode(code, shop.merchantId);
+    if (result.status !== 'OK') return reply.code(400).send({ error: 'Kaspi запросил дополнительное подтверждение.' });
+    const done = await finishCabinetLogin(shop, pending.client, pending.phone);
+    pendingCabinetPhoneLogins.delete(shop.id);
+    return done;
+  } catch (error) {
+    request.log.warn({ trace: pending.client.trace }, 'cabinet sms code failed');
+    return reply.code(400).send({ error: cabinetError(error) });
+  }
+});
 
 // Начатые входы по телефону для чата, ждущие код из SMS (как pendingCabinetLogins)
 const pendingChatLogins = new Map<string, { client: KaspiCabinetClient; phone: string; startedAt: number }>();
@@ -1104,6 +1174,86 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybills/candidates', as
   }
   return result;
 });
+
+/** Магазины, у которых сейчас идёт передача заказов (api — один процесс). */
+const handoverRunning = new Set<string>();
+
+/** Заказы вкладки «Упаковка» кабинета Kaspi (не собраны) — для перевода в «Передачу». */
+app.get<{ Params: { shopId: string } }>('/shops/:shopId/waybills/packing', async (request, reply) => {
+  const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+  if (!shop) return reply.code(404).send({ error: 'shop not found' });
+  const client = new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey()));
+  const orders = (await client.listOrders({ state: 'KASPI_DELIVERY', from: new Date(Date.now() - 14 * DAY_MS) })).filter(isAwaitingPacking);
+  const result = [];
+  for (const order of orders) {
+    const items = await client.getOrderEntries(order.id).catch(() => []);
+    result.push({
+      code: order.code,
+      city: order.city,
+      express: order.express,
+      createdAt: order.createdAt,
+      plannedDeliveryDate: order.plannedDeliveryDate,
+      items: items.map((i) => ({ sku: i.sku, name: i.name, quantity: i.quantity })),
+    });
+  }
+  return result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+});
+
+/**
+ * Перевод выбранных заказов из «Упаковки» в «Передачу»: Kaspi получает отметку «собран» и число мест.
+ * Принимаются только заказы, которые сейчас действительно на упаковке (сверяем с Kaspi),
+ * один запуск на магазин за раз; результат — по каждому заказу отдельно.
+ */
+app.post<{ Params: { shopId: string }; Body: { orders?: { code?: unknown; places?: unknown }[] } }>(
+  '/shops/:shopId/waybills/handover',
+  async (request, reply) => {
+    const shop = await prisma.shop.findUnique({ where: { id: request.params.shopId } });
+    if (!shop) return reply.code(404).send({ error: 'shop not found' });
+    const wanted = Array.isArray(request.body?.orders) ? request.body.orders : [];
+    const places = new Map<string, number>();
+    for (const o of wanted) {
+      const n = Number(o.places ?? 1);
+      if (typeof o.code !== 'string' || !Number.isInteger(n) || n < 1 || n > 99) {
+        return reply.code(400).send({ error: 'Число мест должно быть целым от 1 до 99.' });
+      }
+      places.set(o.code, n);
+    }
+    if (places.size === 0) return reply.code(400).send({ error: 'Выберите хотя бы один заказ.' });
+    if (places.size > 200) return reply.code(400).send({ error: 'За один раз можно передать не больше 200 заказов.' });
+
+    // Защита от повторного нажатия: пока идёт прошлый запуск, новый не стартует
+    if (handoverRunning.has(shop.id)) {
+      return reply.code(409).send({ error: 'Передача уже выполняется. Подождите минуту и обновите список.' });
+    }
+    handoverRunning.add(shop.id);
+    try {
+      const client = new KaspiClient(decryptSecret(shop.apiTokenEnc, encryptionKey()));
+      const packing = new Map(
+        (await client.listOrders({ state: 'KASPI_DELIVERY', from: new Date(Date.now() - 14 * DAY_MS) }))
+          .filter(isAwaitingPacking)
+          .map((o) => [o.code, o]),
+      );
+      const results: { code: string; ok: boolean; error?: string }[] = [];
+      for (const [code, count] of places) {
+        const order = packing.get(code);
+        if (!order) {
+          results.push({ code, ok: false, error: 'Заказа нет на упаковке: возможно, он уже собран или отменён.' });
+          continue;
+        }
+        try {
+          await client.assembleOrder(order, count);
+          results.push({ code, ok: true });
+        } catch (error) {
+          app.log.warn({ code, err: error instanceof Error ? error.message : error }, 'handover failed');
+          results.push({ code, ok: false, error: describeHandoverError(error) });
+        }
+      }
+      return { results };
+    } finally {
+      handoverRunning.delete(shop.id);
+    }
+  },
+);
 
 /**
  * Экран «Сборка», как лист подбора на WB: заказы из «Передачи», сгруппированные по товару.

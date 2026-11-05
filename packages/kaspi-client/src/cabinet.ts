@@ -550,6 +550,13 @@ export class KaspiCabinetClient {
     const text = await res.text();
     if (!res.ok) {
       const code = /"(?:code|error|errorCode)"\s*:\s*"([A-Z_]+)"/.exec(text)?.[1];
+      if (code === 'CREDENTIALS_INVALID') {
+        throw new KaspiCabinetError(
+          res.status,
+          text,
+          'Kaspi не принял логин или пароль от кабинета продавца. Проверьте почту и пароль пользователя кабинета или войдите по номеру телефона.',
+        );
+      }
       throw new KaspiCabinetError(res.status, text, `Kaspi login failed: ${code ?? res.status}`);
     }
     return text ? JSON.parse(text) : null;

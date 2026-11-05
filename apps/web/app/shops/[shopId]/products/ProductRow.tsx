@@ -44,12 +44,12 @@ export interface ProductView {
   } | null;
 }
 
-const INPUT = 'w-16 rounded border bg-white px-1.5 py-1 text-right tabular-nums';
+const INPUT = 'ml-auto block w-full max-w-[96px] min-[1800px]:max-w-[130px] rounded border bg-white px-1 py-1 text-right text-xs tabular-nums xl:px-1.5 xl:text-sm';
 
 /** Карточка на витрине kaspi.kz: ссылка из кабинета, иначе по номеру общей карточки. */
 const shopUrl = (p: ProductView) => p.shopUrl ?? (p.kaspiMasterSku ? `https://kaspi.kz/shop/p/-${p.kaspiMasterSku}/` : null);
 
-const PILL ='inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap';
+const PILL = 'inline-flex items-center justify-center gap-1 rounded-full px-2 py-1 text-center text-[11px] leading-tight font-semibold xl:px-2.5 xl:text-xs';
 
 /**
  * Позиция по цене в карточке, как в Okto: «Топ 1» зелёная плашка, «Ниже №1» красная
@@ -111,7 +111,7 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
       <td className="py-2 pl-2">
         <RowCheckbox id={product.id} />
       </td>
-      <td className="max-w-[200px] px-1.5 py-2">
+      <td className="px-1.5 py-2">
         <form id={formId} ref={formRef} action={action}>
           <input type="hidden" name="shopId" value={shopId} />
           <input type="hidden" name="productId" value={product.id} />
@@ -129,18 +129,18 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
               href={shopUrl(product)!}
               target="_blank"
               rel="noreferrer"
-              title="Открыть карточку на kaspi.kz"
-              className="text-[13px] leading-tight font-medium text-slate-900 hover:text-sky-700 hover:underline"
+              title={`${product.name} — открыть карточку на kaspi.kz`}
+              className="line-clamp-2 min-w-0 text-xs leading-tight font-medium text-slate-900 hover:text-sky-700 xl:text-[13px] hover:underline"
             >
               {product.name} <span className="text-xs text-slate-400">↗</span>
             </a>
           ) : (
-            <span className="text-[13px] leading-tight font-medium text-slate-900">{product.name}</span>
+            <span className="line-clamp-2 min-w-0 text-xs leading-tight font-medium text-slate-900 xl:text-[13px]" title={product.name}>{product.name}</span>
           )}
         </div>
         {state.error && <div className="mt-1 text-xs text-red-600">{state.error}</div>}
       </td>
-      <td className={`${v('price')} ${COL.price} px-1.5 py-2 text-right text-base font-bold text-sky-800 tabular-nums`}>
+      <td className={`${v('price')} ${COL.price} px-1 py-2 text-right text-sm font-bold whitespace-nowrap text-sky-800 tabular-nums xl:px-1.5 xl:text-base`}>
         <PriceEdit shopId={shopId} productId={product.id} price={product.price} />
         {/* Как в Okto: под нашей ценой — цена первого места, если мы не первые */}
         {product.position !== null && product.position > 1 && product.topCompetitorPrice !== null && (
@@ -201,7 +201,7 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
         <input {...field} name="ceilingPrice" defaultValue={setting?.ceilingPrice ?? ''} placeholder="₸" aria-label="Максимальная цена" className={`${INPUT} border-amber-300 text-amber-900`} />
       </td>
       <td className={`${v('step')} ${COL.bot} px-1.5 py-2 text-right`}>
-        <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className="w-12 rounded border border-amber-300 bg-white px-1 py-1 text-right text-amber-900 tabular-nums" />
+        <input {...field} name="step" defaultValue={setting?.step ?? 1} aria-label="Шаг" className={`${INPUT} border-amber-300 text-amber-900`} />
       </td>
       <td className={`${v('bot')} ${COL.toggle} px-1.5 py-2 text-center`}>
         <input form={formId} type="checkbox" name="enabled" defaultChecked={setting?.enabled ?? false} onChange={save} aria-label="Бот включён" className="h-5 w-5 accent-emerald-600" />
@@ -214,7 +214,7 @@ export function ProductRow({ shopId, product, view }: { shopId: string; product:
           placeholder="—"
           title="Товар сразу встанет на предзаказ на столько дней (1–30, больше Kaspi не принимает) остатки сохранятся; Kaspi применяет минут через 10–15. Закончится — останется на предзаказе. Очистить — снять предзаказ."
           aria-label="Предзаказ, дней"
-          className="w-12 rounded border border-indigo-300 bg-white px-1 py-1 text-right text-indigo-900 tabular-nums"
+          className={`${INPUT} border-indigo-300 text-indigo-900`}
         />
         {product.preorderDays && product.preOrder !== product.preorderDays ? (
           <div className="mt-1 text-[11px] leading-tight text-slate-500">ставлю в Kaspi…</div>

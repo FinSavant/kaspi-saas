@@ -139,3 +139,33 @@ describe('KaspiClient.listOrders', () => {
     expect(packing).toMatchObject({ code: '502', assembled: false, waybillUrl: null, courierTransmissionDate: null });
   });
 });
+
+describe('перевод заказа из «Упаковки» в «Передачу»', () => {
+  it('отличает заказ на упаковке от заказа в передаче', async () => {
+    const { isAwaitingPacking } = await import('./client');
+    expect(isAwaitingPacking(order({ assembled: false, waybillUrl: null }))).toBe(true);
+    expect(isAwaitingPacking(order({ assembled: true }))).toBe(false);
+    expect(isAwaitingPacking(order({ assembled: false, status: 'CANCELLED' }))).toBe(false);
+    expect(isAwaitingPacking(order({ assembled: false, courierTransmissionDate: new Date() }))).toBe(false);
+  });
+
+  it('отправляет ASSEMBLE с числом мест и не ходит в реальный Kaspi', async () => {
+    const spy = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }));
+    const client = new KaspiClient('token', 'https://example.test', spy);
+    await client.assembleOrder({ id: '77', code: '100' }, 3);
+    const [url, init] = spy.mock.calls[0]!;
+    expect(String(url)).toBe('https://example.test/orders');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      data: { type: 'orders', id: '77', attributes: { code: '100', status: 'ASSEMBLE', numberOfSpace: 3 } },
+    });
+  });
+
+  it('не принимает неверное число мест и объясняет ошибки Kaspi по-русски', async () => {
+    const { describeHandoverError, KaspiApiError } = await import('./client');
+    const client = new KaspiClient('token', 'https://example.test', vi.fn<typeof fetch>());
+    await expect(client.assembleOrder({ id: '1', code: '1' }, 0)).rejects.toThrow();
+    expect(describeHandoverError(new KaspiApiError(409, ''))).toMatch(/уже собран/);
+    expect(describeHandoverError(new KaspiApiError(500, ''))).toMatch(/временно/);
+  });
+});

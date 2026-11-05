@@ -70,6 +70,32 @@ export function isAwaitingHandover(order: KaspiOrder): boolean {
   );
 }
 
+/**
+ * Заказ во вкладке «Упаковка» кабинета Kaspi: Kaspi Доставка, принят продавцом,
+ * но ещё не собран (assembled=false) и не передан курьеру.
+ */
+export function isAwaitingPacking(order: KaspiOrder): boolean {
+  return (
+    order.state === 'KASPI_DELIVERY' &&
+    !order.assembled &&
+    order.courierTransmissionDate === null &&
+    !CANCEL_STATUSES.has(order.status)
+  );
+}
+
+/** Русское объяснение ошибки Kaspi при переводе заказа в «Передачу». */
+export function describeHandoverError(error: unknown): string {
+  if (error instanceof KaspiApiError) {
+    if (error.status === 401 || error.status === 403) return 'Kaspi не принял токен магазина или у токена нет права менять заказы.';
+    if (error.status === 404) return 'Заказ не найден в Kaspi.';
+    if (error.status === 409 || error.status === 422) return 'Kaspi отклонил перевод: заказ уже собран, отменён или находится в другом статусе.';
+    if (error.status === 429) return 'Kaspi просит подождать: слишком много запросов. Повторите через минуту.';
+    if (error.status >= 500) return 'Kaspi временно не отвечает. Повторите позже.';
+    return `Kaspi отклонил запрос (код ${error.status}).`;
+  }
+  return 'Не удалось связаться с Kaspi. Повторите позже.';
+}
+
 export interface ListOrdersParams {
   state: string;
   from: Date;
@@ -135,6 +161,30 @@ export class KaspiClient {
         categoryTitle: e.category?.title ?? null,
       };
     });
+  }
+
+  /**
+   * Перевод заказа из «Упаковки» в «Передачу» (Kaspi Доставка): сообщаем, что заказ собран,
+   * и число мест. После этого Kaspi формирует накладную. Реальный вызов — только по кнопке владельца.
+   */
+  async assembleOrder(order: { id: string; code: string }, numberOfSpace: number): Promise<void> {
+    if (!Number.isInteger(numberOfSpace) || numberOfSpace < 1 || numberOfSpace > 99) throw new RangeError('numberOfSpace');
+    const res = await this.fetchImpl(`${this.baseUrl}/orders`, {
+      method: 'POST',
+      headers: {
+        'X-Auth-Token': this.token,
+        'Content-Type': 'application/vnd.api+json',
+        Accept: 'application/vnd.api+json',
+      },
+      body: JSON.stringify({
+        data: {
+          type: 'orders',
+          id: order.id,
+          attributes: { code: order.code, status: 'ASSEMBLE', numberOfSpace },
+        },
+      }),
+    });
+    if (!res.ok) throw new KaspiApiError(res.status, await res.text());
   }
 
   async downloadWaybill(url: string): Promise<Uint8Array> {

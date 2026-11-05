@@ -110,3 +110,37 @@ export async function printWaybills(_prev: PrintState, formData: FormData): Prom
     perShop: shopIds.length > 1 ? perShop.map(({ name, count, notReady, error }) => ({ name, count, notReady, error })) : undefined,
   };
 }
+
+export interface PackingOrder {
+  code: string;
+  city: string | null;
+  express: boolean;
+  createdAt: string;
+  plannedDeliveryDate: string | null;
+  items: { sku: string; name: string; quantity: number }[];
+}
+
+/** Заказы вкладки «Упаковка» кабинета Kaspi. */
+export async function loadPacking(shopId: string): Promise<{ orders?: PackingOrder[]; error?: string }> {
+  try {
+    return { orders: await api<PackingOrder[]>(`/shops/${shopId}/waybills/packing`) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Не удалось загрузить заказы.' };
+  }
+}
+
+export interface HandoverResult {
+  results?: { code: string; ok: boolean; error?: string }[];
+  error?: string;
+}
+
+/** Перевод выбранных заказов из «Упаковки» в «Передачу» (число мест — по каждому заказу). */
+export async function handoverOrders(shopId: string, orders: { code: string; places: number }[]): Promise<HandoverResult> {
+  try {
+    const result = await api<HandoverResult>(`/shops/${shopId}/waybills/handover`, { method: 'POST', body: { orders } });
+    revalidatePath(`/shops/${shopId}/waybills`);
+    return result;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Не удалось передать заказы.' };
+  }
+}

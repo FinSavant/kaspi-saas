@@ -133,7 +133,7 @@ export async function syncProducts(_prev: SyncState, formData: FormData): Promis
   }
 }
 
-/** Процент наценки для колонки «Мин. цена +%»: одно целое число (хранится в markupPercents как массив из одного значения). */
+/** Процент наценки для колонки «Себестоимость + %»: одно целое число (хранится в markupPercents как массив из одного значения). */
 export async function saveMarkups(_prev: SaveState, formData: FormData): Promise<SaveState> {
   const shopId = String(formData.get('shopId'));
   const raw = formData.getAll('markup').map((v) => String(v).trim()).filter(Boolean).slice(0, 1);

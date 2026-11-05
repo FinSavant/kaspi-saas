@@ -58,7 +58,7 @@ export function RegisterForm() {
       </Field>
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
       <button type="submit" disabled={pending} className={BUTTON}>
-        {pending ? 'Создаю аккаунт…' : 'Начать 3 дня бесплатно'}
+        {pending ? 'Создаю аккаунт…' : 'Начать 5 дней бесплатно'}
       </button>
       <p className="text-center text-sm text-slate-500">
         Уже есть аккаунт?{' '}

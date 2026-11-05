@@ -9,47 +9,99 @@ export const pct = (value: number | null | undefined) => (value == null ? '—' 
 export function Delta({ now, before, inverse = false }: { now: number | null; before: number | null; inverse?: boolean }) {
   if (now === null || before === null || before === 0) return null;
   const change = Math.round(((now - before) / Math.abs(before)) * 1000) / 10;
-  if (change === 0) return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">0%</span>;
+  if (change === 0) return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">0%</span>;
   const good = inverse ? change < 0 : change > 0;
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${good ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${good ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'}`}>
       {change > 0 ? '↑' : '↓'} {Math.abs(change).toLocaleString('ru-RU')}%
     </span>
   );
 }
 
-export function Tile({ label, value, delta, tone = 'default' }: { label: string; value: string; delta?: ReactNode; tone?: 'default' | 'good' | 'info' }) {
+const ACCENTS = {
+  blue: { bar: 'from-blue-500 to-sky-400', icon: 'bg-blue-50 text-blue-600' },
+  emerald: { bar: 'from-emerald-500 to-teal-400', icon: 'bg-emerald-50 text-emerald-600' },
+  violet: { bar: 'from-violet-500 to-fuchsia-400', icon: 'bg-violet-50 text-violet-600' },
+  amber: { bar: 'from-amber-500 to-orange-400', icon: 'bg-amber-50 text-amber-600' },
+  rose: { bar: 'from-rose-500 to-pink-400', icon: 'bg-rose-50 text-rose-600' },
+  sky: { bar: 'from-sky-500 to-cyan-400', icon: 'bg-sky-50 text-sky-600' },
+} as const;
+export type Accent = keyof typeof ACCENTS;
+
+const ICONS: Record<string, string> = {
+  money: 'M12 2v20M17 6.5C17 4.6 14.8 3.5 12 3.5S7 4.6 7 6.5 9.2 9.5 12 10s5 1.4 5 3.5-2.2 3-5 3-5-1.1-5-3',
+  orders: 'M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0',
+  check: 'M3 3v18h18M7 15l4-4 3 3 5-6',
+  cancel: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM15 9l-6 6M9 9l6 6',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  profit: 'M23 6l-9.5 9.5-5-5L1 18M17 6h6v6',
+  box: 'M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8',
+  percent: 'M19 5 5 19M7 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM17 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+  truck: 'M1 3h15v13H1zM16 8h4l3 3v5h-7zM5.5 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18.5 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+};
+
+export function Icon({ name, className = 'h-5 w-5' }: { name: string; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d={ICONS[name] ?? ICONS.check} />
+    </svg>
+  );
+}
+
+export function Tile({
+  label,
+  value,
+  delta,
+  tone = 'default',
+  icon = 'check',
+  accent,
+}: {
+  label: string;
+  value: string;
+  delta?: ReactNode;
+  tone?: 'default' | 'good' | 'info';
+  icon?: string;
+  accent?: Accent;
+}) {
+  const acc = ACCENTS[accent ?? (tone === 'good' ? 'emerald' : tone === 'info' ? 'sky' : 'blue')];
   const color = tone === 'good' ? 'text-emerald-700' : tone === 'info' ? 'text-sky-700' : 'text-slate-900';
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${acc.bar}`} />
       <div className="flex items-start justify-between gap-2">
-        <div className={`text-xl font-semibold whitespace-nowrap tabular-nums ${color}`}>{value}</div>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${acc.icon}`}>
+          <Icon name={icon} />
+        </div>
         {delta}
       </div>
-      <div className="mt-1 text-xs text-slate-500">{label}</div>
+      <div className={`mt-3 text-2xl leading-none font-bold tracking-tight whitespace-nowrap tabular-nums ${color}`}>{value}</div>
+      <div className="mt-1.5 text-xs font-medium text-slate-500">{label}</div>
     </div>
   );
 }
 
 export function Card({ title, children, footer }: { title: string; children: ReactNode; footer?: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <h2 className="px-4 pt-4 pb-3 font-semibold">{title}</h2>
-      <div className="overflow-x-auto px-4 pb-4">{children}</div>
-      {footer && <div className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500">{footer}</div>}
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <h2 className="flex items-center gap-2 px-5 pt-4 pb-3 text-[15px] font-semibold text-slate-900">
+        <span className="h-4 w-1 rounded-full bg-gradient-to-b from-blue-500 to-sky-400" />
+        {title}
+      </h2>
+      <div className="overflow-x-auto px-5 pb-5">{children}</div>
+      {footer && <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-3 text-xs text-slate-500">{footer}</div>}
     </section>
   );
 }
 
-const TH = 'pb-2 pr-3 font-medium text-right first:text-left';
-const TD = 'py-2 pr-3 text-right tabular-nums first:text-left';
+const TH = 'pb-2 pr-3 text-xs font-semibold tracking-wide uppercase text-slate-400 text-right first:text-left';
+const TD = 'py-2.5 pr-3 text-right tabular-nums first:text-left';
 
 export function ShareTable({ rows, nameTitle, withAvgCheck = false }: { rows: ShareRow[]; nameTitle: string; withAvgCheck?: boolean }) {
   if (rows.length === 0) return <p className="text-sm text-slate-500">Нет данных за период.</p>;
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="text-xs text-slate-500">
+        <tr>
           <th className={TH}>{nameTitle}</th>
           <th className={TH}>Заказы</th>
           <th className={TH}>Выручка</th>
@@ -59,14 +111,21 @@ export function ShareTable({ rows, nameTitle, withAvgCheck = false }: { rows: Sh
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.key} className="border-t border-slate-200">
+          <tr key={r.key} className="border-t border-slate-100 even:bg-slate-50/60 hover:bg-blue-50/40">
             <td className={TD} title={r.key}>
               {r.label}
             </td>
             <td className={TD}>{r.orders}</td>
             <td className={TD}>{tenge(r.revenue)}</td>
             {withAvgCheck && <td className={TD}>{tenge(r.avgCheck)}</td>}
-            <td className={TD}>{pct(r.sharePercent)}</td>
+            <td className={TD}>
+              <div className="flex items-center justify-end gap-2">
+                <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-1.5 rounded-full bg-gradient-to-r from-blue-500 to-sky-400" style={{ width: `${Math.min(100, r.sharePercent ?? 0)}%` }} />
+                </div>
+                <span className="w-12">{pct(r.sharePercent)}</span>
+              </div>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -74,12 +133,14 @@ export function ShareTable({ rows, nameTitle, withAvgCheck = false }: { rows: Sh
   );
 }
 
+const STATUS_GRADIENTS = ['from-emerald-500 to-teal-400', 'from-blue-500 to-sky-400', 'from-violet-500 to-fuchsia-400', 'from-amber-500 to-orange-400', 'from-rose-500 to-pink-400'];
+
 export function StatusBars({ rows }: { rows: StatusRow[] }) {
   if (rows.length === 0) return <p className="text-sm text-slate-500">Нет заказов за период.</p>;
   const max = Math.max(...rows.map((r) => r.count));
   return (
     <ul className="space-y-2">
-      {rows.map((r) => (
+      {rows.map((r, index) => (
         <li key={r.status} className="text-sm">
           <div className="flex justify-between">
             <span title={r.status}>{r.label}</span>
@@ -87,8 +148,8 @@ export function StatusBars({ rows }: { rows: StatusRow[] }) {
               {r.count} · {pct(r.sharePercent)}
             </span>
           </div>
-          <div className="mt-1 h-2 rounded bg-slate-100">
-            <div className="h-2 rounded bg-emerald-500" style={{ width: `${(r.count / max) * 100}%` }} />
+          <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-100">
+            <div className={`h-2.5 rounded-full bg-gradient-to-r ${STATUS_GRADIENTS[index % STATUS_GRADIENTS.length]}`} style={{ width: `${(r.count / max) * 100}%` }} />
           </div>
         </li>
       ))}
@@ -127,7 +188,7 @@ export function ExpenseTable({
   const profitColor = totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700';
   return (
     <table className="w-full text-sm">
-      <thead className="bg-slate-50 text-left text-xs text-slate-500 uppercase">
+      <thead className="bg-slate-50 text-left text-xs tracking-wide text-slate-500 uppercase">
         <tr>
           <th className="px-3 py-2 font-medium">Статья</th>
           <th className="px-3 py-2 text-right font-medium">Сумма</th>
@@ -147,7 +208,7 @@ export function ExpenseTable({
           )}
         </tr>
         {rows.map((r) => (
-          <tr key={r.label} className="border-t border-slate-200 text-red-700">
+          <tr key={r.label} className="border-t border-slate-100 text-rose-700 even:bg-slate-50/60">
             <td className="px-3 py-2">− {r.label}</td>
             <td className="px-3 py-2 text-right tabular-nums">{tenge(r.value)}</td>
             <td className="px-3 py-2 text-right tabular-nums text-slate-700">{share(r.value)}</td>
@@ -158,7 +219,7 @@ export function ExpenseTable({
             )}
           </tr>
         ))}
-        <tr className="border-t border-slate-200 bg-slate-100 font-semibold">
+        <tr className="border-t-2 border-slate-200 bg-emerald-50/60 font-semibold">
           <td className="px-3 py-2">= {profitLabel}</td>
           <td className={`px-3 py-2 text-right tabular-nums ${profitColor}`}>{tenge(totals.netProfit)}</td>
           <td className={`px-3 py-2 text-right tabular-nums ${profitColor}`}>{share(totals.netProfit)}</td>
@@ -220,7 +281,7 @@ export function ProductTable({
         </thead>
         <tbody>
           {rows.map((p, index) => (
-            <tr key={p.sku} className="border-t border-slate-200 align-middle hover:bg-slate-50">
+            <tr key={p.sku} className="border-t border-slate-100 align-middle hover:bg-blue-50/40">
               <td className="px-2 py-2 text-slate-400 tabular-nums">{index + 1}</td>
               <td className="max-w-xs px-2 py-2">
                 <div className="font-medium text-slate-900">{p.name}</div>

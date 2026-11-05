@@ -71,7 +71,7 @@ export const PLANS: Plan[] = [
 ];
 
 export const REVIEWS_ADDON_PRICE = 4_999;
-export const TRIAL_DAYS = 3;
+export const TRIAL_DAYS = 5;
 
 export function getPlan(id: string): Plan {
   return PLANS.find((p) => p.id === id) ?? PLANS[0]!;
