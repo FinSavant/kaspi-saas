@@ -14,17 +14,28 @@ const LAYOUTS = new Set(['thermal', 'a4x4', 'a4x8']);
 
 export async function reprintBatch(_prev: PrintState, formData: FormData): Promise<PrintState> {
   const shopId = String(formData.get('shopId'));
-  const batchId = String(formData.get('batchId'));
+  // Склейка нескольких магазинов — это несколько склеек; пересобираем каждую и отдаём одним файлом
+  const batchIds = String(formData.get('batchId')).split(',').filter(Boolean);
   const layout = String(formData.get('layout'));
   if (!LAYOUTS.has(layout)) return { error: 'Неизвестный формат печати.' };
 
   try {
-    const result = await api<NonNullable<PrintState['result']>>(`/waybill-batches/${batchId}/reprint`, {
-      method: 'POST',
-      body: { layout },
-    });
+    const results = await Promise.all(
+      batchIds.map((batchId) =>
+        api<NonNullable<PrintState['result']>>(`/waybill-batches/${batchId}/reprint`, { method: 'POST', body: { layout } }),
+      ),
+    );
     revalidatePath(`/shops/${shopId}/waybills`);
-    return { result };
+    const ids = results.filter((r) => r.batchId).map((r) => r.batchId!);
+    return {
+      result: {
+        count: results.reduce((n, r) => n + r.count, 0),
+        notReady: results.reduce((n, r) => n + r.notReady, 0),
+        unreadable: results.reduce((n, r) => n + r.unreadable, 0),
+        batchId: ids.length === 1 ? ids[0] : undefined,
+        href: ids.length > 1 ? `/shops/${shopId}/waybills/combined/pdf?ids=${ids.join(',')}` : undefined,
+      },
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Не удалось пересобрать.' };
   }

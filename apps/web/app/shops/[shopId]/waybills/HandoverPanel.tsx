@@ -10,7 +10,9 @@ const formatDate = (iso: string) =>
  * Заказы «На упаковке»: выбрать галочками, указать число мест и перевести в «Передачу».
  * Накладные после перевода получают отдельной кнопкой ниже («Склеить накладные»).
  */
-export function HandoverPanel({ shopId }: { shopId: string }) {
+export function HandoverPanel({ shopId, shops }: { shopId: string; shops: { id: string; name: string }[] }) {
+  // Магазин выбирается прямо здесь, не зависит от текущего в настройках
+  const [activeShop, setActiveShop] = useState(shopId);
   const [orders, setOrders] = useState<PackingOrder[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [places, setPlaces] = useState<Record<string, number>>({});
@@ -30,7 +32,7 @@ export function HandoverPanel({ shopId }: { shopId: string }) {
     setError(null);
     setResults(null);
     startTransition(async () => {
-      const res = await loadPacking(shopId);
+      const res = await loadPacking(activeShop);
       if (res.error) setError(res.error);
       else {
         setOrders(res.orders ?? []);
@@ -38,6 +40,17 @@ export function HandoverPanel({ shopId }: { shopId: string }) {
       }
       busy.current = false;
     });
+  };
+
+  const changeShop = (id: string) => {
+    if (busy.current) return;
+    setActiveShop(id);
+    // Список принадлежал другому магазину — сбрасываем
+    setOrders(null);
+    setSelected(new Set());
+    setPlaces({});
+    setResults(null);
+    setError(null);
   };
 
   const toggle = (code: string) =>
@@ -55,7 +68,7 @@ export function HandoverPanel({ shopId }: { shopId: string }) {
     setError(null);
     startTransition(async () => {
       const res = await handoverOrders(
-        shopId,
+        activeShop,
         [...selected].map((code) => ({ code, places: placesOf(code) })),
       );
       if (res.error) setError(res.error);
@@ -92,6 +105,24 @@ export function HandoverPanel({ shopId }: { shopId: string }) {
           {pending && orders === null ? 'Загружаю…' : orders === null ? 'Показать заказы на упаковке' : 'Обновить список'}
         </button>
       </div>
+
+      {shops.length > 1 && (
+        <label className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium">Магазин:</span>
+          <select
+            value={activeShop}
+            onChange={(e) => changeShop(e.target.value)}
+            disabled={pending}
+            className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            {shops.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
