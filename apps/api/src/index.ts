@@ -216,6 +216,38 @@ function noteFailedLogin(email: string): void {
   else entry.count += 1;
 }
 
+/**
+ * Сообщает владельцу платформы в Telegram о новом продавце. Получатели: администраторы с
+ * привязанным Telegram и (необязательно) OWNER_TELEGRAM_CHAT_ID из .env. Ошибки не мешают регистрации.
+ */
+async function notifyNewSignup(user: { email: string | null; telegramChatId: string | null; name: string | null }, method: 'email' | 'telegram') {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
+    const admins = await prisma.user.findMany({ where: { isAdmin: true, telegramChatId: { not: null } }, select: { telegramChatId: true } });
+    const recipients = new Set<string>(admins.map((a: { telegramChatId: string | null }) => a.telegramChatId as string));
+    if (process.env.OWNER_TELEGRAM_CHAT_ID) recipients.add(process.env.OWNER_TELEGRAM_CHAT_ID.trim());
+    if (!recipients.size) return;
+    const when = new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Almaty', dateStyle: 'short', timeStyle: 'short' });
+    const text = [
+      '🆕 Новая регистрация в SANQ',
+      user.name ? `Имя: ${user.name}` : null,
+      method === 'email' ? `Вход: email и пароль (${user.email})` : `Вход: Telegram (chat ${user.telegramChatId})`,
+      `Время: ${when} (Алматы)`,
+      `Пробный период: ${TRIAL_DAYS} дн.`,
+    ].filter(Boolean).join('\n');
+    for (const chatId of recipients) {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      }).catch(() => null);
+    }
+  } catch (err) {
+    app.log.warn({ err }, 'не удалось отправить уведомление о регистрации');
+  }
+}
+
 /** Регистрация продавца: аккаунт, пробный период и сессия. */
 app.post<{ Body: { email?: string; password?: string; name?: string } }>('/auth/register', async (request, reply) => {
   const email = normalizeEmail(String(request.body?.email ?? ''));
@@ -228,6 +260,7 @@ app.post<{ Body: { email?: string; password?: string; name?: string } }>('/auth/
   // Email не подтверждается, поэтому регистрация никогда не даёт доступа к существующему аккаунту
   const user = await prisma.user.create({ data: { email, passwordHash: hashPassword(password), name } });
   await ownerSubscription(user.id);
+  void notifyNewSignup(user, 'email');
   return startSession(user.id);
 });
 
@@ -892,6 +925,7 @@ app.post<{ Body: { code?: string; chatId?: string; name?: string } }>('/auth/tel
     // Пароля нет: такой продавец входит только через Telegram
     user = await prisma.user.create({ data: { telegramChatId: chatId, passwordHash: '!', name: String(request.body?.name ?? '').trim() || null } });
     await ownerSubscription(user.id);
+    void notifyNewSignup(user, 'telegram');
   }
   await redis.set(tgLoginKey(code), user.id, { EX: TG_LOGIN_TTL_SEC });
   return { ok: true, created };
