@@ -1839,6 +1839,9 @@ app.patch<{
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   if (b.chatAgentEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   const agentTurningOn = b.chatAgentEnabled === true && !shop.chatAgentEnabled;
+  if (agentTurningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
+    return reply.code(402).send({ error: 'Агент-ответчик входит в блок «Отзывы»: он есть в «Pro» и тарифе «Только отзывы».', code: 'limit' });
+  }
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
   if (turningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
     return reply.code(402).send({ error: 'Отзывы не входят в ваш тариф. Они есть в «Pro» и отдельным тарифом «Только отзывы» на вкладке «Тарифы».', code: 'limit' });

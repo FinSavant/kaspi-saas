@@ -11,6 +11,7 @@ import {
   encryptSecret,
   escalationText,
   findKnowledge,
+  ownerAccess,
   needsReply,
   parseModelAnswer,
   recentTurns,
@@ -58,7 +59,7 @@ export interface ChatAgentResult {
 type AgentShop = Awaited<ReturnType<typeof loadShop>>;
 
 async function loadShop(shopId: string) {
-  return prisma.shop.findUniqueOrThrow({ where: { id: shopId }, include: { owner: { select: { telegramChatId: true } } } });
+  return prisma.shop.findUniqueOrThrow({ where: { id: shopId }, include: { owner: { select: { telegramChatId: true, isAdmin: true, subscription: true } } } });
 }
 
 function clientFor(shop: { chatSessionEnc: string | null }): KaspiCabinetClient {
@@ -191,6 +192,8 @@ export async function runChatAgentForShop(shopId: string, now = new Date()): Pro
   const result: ChatAgentResult = { checked: 0, greeted: 0, answered: 0, escalated: 0, skipped: 0, delivered: 0 };
   const shop = await loadShop(shopId);
   if (!shop.chatAgentEnabled || !shop.chatAgentEnabledAt || !shop.chatSessionEnc) return { ...result, skippedReason: 'выключено' };
+  // Агент входит в блок «Отзывы»: тариф истёк или отзывы не входят в тариф — агент стоит, настройки сохраняются
+  if (!ownerAccess(shop.owner, now).reviewsAllowed) return { ...result, skippedReason: 'не входит в тариф' };
   const client = clientFor(shop);
 
   try {
