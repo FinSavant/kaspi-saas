@@ -91,7 +91,7 @@ export default async function ReviewsPage({
         </div>
         <div className="flex items-center gap-2">
           <MailingToggle shopId={shopId} settings={settings} />
-          {settings.chatAgentAvailable && <ChatAgentToggle shopId={shopId} settings={settings} />}
+          <ChatAgentToggle shopId={shopId} settings={settings} />
           <SettingsButton shopId={shopId} settings={settings} />
           <TemplatesButton shopId={shopId} settings={settings} />
         </div>

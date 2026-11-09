@@ -9,7 +9,6 @@ import {
   parseWbReportFile,
   concatPdfs,
   minProfitablePrice,
-  chatAgentAllowed,
   DEFAULT_TEMPLATES,
   TEMPLATE_PARAMS,
   redisConnectionFromUrl,
@@ -1798,8 +1797,6 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/reviews/settings', async
     chatConnected: !!shop.chatSessionEnc,
     shopName: shop.name,
     reviewsEnabled: shop.reviewsEnabled,
-    // Агент-ответчик пока только у владельца платформы: у остальных продавцов скрыт
-    chatAgentAvailable: chatAgentAllowed(request.user),
     chatAgentEnabled: shop.chatAgentEnabled,
     reviewHoursFrom: shop.reviewHoursFrom,
     reviewHoursTo: shop.reviewHoursTo,
@@ -1840,7 +1837,6 @@ app.patch<{
     if (typeof t === 'string' && (t.trim().length < 5 || t.length > 3000)) return reply.code(400).send({ error: 'Текст шаблона — от 5 до 3000 символов.' });
   }
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
-  if (b.chatAgentEnabled !== undefined && !chatAgentAllowed(request.user)) return reply.code(403).send({ error: 'Агент-ответчик пока недоступен.' });
   if (b.chatAgentEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   const agentTurningOn = b.chatAgentEnabled === true && !shop.chatAgentEnabled;
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
