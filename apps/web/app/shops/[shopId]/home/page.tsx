@@ -99,7 +99,7 @@ export default async function HomePage({ params }: { params: Promise<{ shopId: s
         {has('reviews') && (
           <Link href={`${base}/reviews`} className="rounded-xl border border-slate-200 bg-white p-4 hover:border-blue-400">
             <div className="font-semibold">💬 Отзывы</div>
-            <p className="mt-1 text-sm text-slate-500">Рассылка покупателям: поздравление с заказом и просьба об отзыве.</p>
+            <p className="mt-1 text-sm text-slate-500">Рассылка покупателям (поздравление, просьба об отзыве) и агент-ответчик: отвечает в чате до 1 минуты.</p>
           </Link>
         )}
         <Link href={`${base}/billing`} className="rounded-xl border border-slate-200 bg-white p-4 hover:border-blue-400">

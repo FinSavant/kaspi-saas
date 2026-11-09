@@ -97,6 +97,19 @@ export default async function ReviewsPage({
         </div>
       </div>
 
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+        <div className="font-semibold">🤖 Агент-ответчик — отвечает покупателям в чате Kaspi до 1 минуты</div>
+        <p className="mt-1 text-emerald-900">
+          Быстрые ответы поднимают рейтинг продавца. Агент сам изучает описание вашего товара — ничего вносить не нужно — и учится на ваших ответах.
+        </p>
+        <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-emerald-900">
+          <li>Подключите чат в «Настройках» и включите переключатель «Агент-ответчик».</li>
+          <li>Агент отвечает на новые сообщения покупателей. На старые сообщения он не отвечает.</li>
+          <li>Если вопрос сложный, покупателю уходит «Секунду, уточню», а вам в Telegram — вопрос. Ответьте реплаем на это сообщение: ваш ответ сразу уйдёт покупателю и запомнится.</li>
+          <li>Жалобы, вопросы о здоровье, возврате и скидках агент сам не решает — он передаёт их вам.</li>
+        </ol>
+      </div>
+
       {!billing.reviewsAllowed && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span>
