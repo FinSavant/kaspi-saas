@@ -8,6 +8,7 @@ export interface ReviewSettings {
   chatConnected: boolean;
   shopName: string;
   reviewsEnabled: boolean;
+  chatAgentAvailable: boolean;
   chatAgentEnabled: boolean;
   reviewHoursFrom: number;
   reviewHoursTo: number;

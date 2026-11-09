@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildModelPrompt,
+  chatAgentAllowed,
   classifyGroup,
   collectBuyerQuestion,
   decideAction,
@@ -192,5 +193,15 @@ describe('лимит, подсказка модели, эскалация, об�
   });
   it('обезличивание вопроса для памяти', () => {
     expect(scrubForMemory('Заказ 4849999999, звоните +7 707 123-45-67')).toBe('Заказ [номер], звоните [номер]');
+  });
+});
+
+describe('chatAgentAllowed', () => {
+  it('только админ платформы', () => {
+    expect(chatAgentAllowed({ isAdmin: true })).toBe(true);
+    expect(chatAgentAllowed({ isAdmin: false })).toBe(false);
+    expect(chatAgentAllowed({})).toBe(false);
+    expect(chatAgentAllowed(null)).toBe(false);
+    expect(chatAgentAllowed(undefined)).toBe(false);
   });
 });

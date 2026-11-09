@@ -311,3 +311,8 @@ export function scrubForMemory(text: string): string {
     .replace(/\b\d{9,10}\b/g, '[номер]')
     .trim();
 }
+
+/** Агент-ответчик пока доступен только владельцу платформы (админу): остальным продавцам скрыт. */
+export function chatAgentAllowed(user: { isAdmin?: boolean } | null | undefined): boolean {
+  return user?.isAdmin === true;
+}

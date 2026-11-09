@@ -4,6 +4,7 @@ import {
   HOLDING_MESSAGE,
   MODEL_SYSTEM_PROMPT,
   buildModelPrompt,
+  chatAgentAllowed,
   classifyGroup,
   collectBuyerQuestion,
   decideAction,
@@ -58,7 +59,7 @@ export interface ChatAgentResult {
 type AgentShop = Awaited<ReturnType<typeof loadShop>>;
 
 async function loadShop(shopId: string) {
-  return prisma.shop.findUniqueOrThrow({ where: { id: shopId }, include: { owner: { select: { telegramChatId: true } } } });
+  return prisma.shop.findUniqueOrThrow({ where: { id: shopId }, include: { owner: { select: { telegramChatId: true, isAdmin: true } } } });
 }
 
 function clientFor(shop: { chatSessionEnc: string | null }): KaspiCabinetClient {
@@ -190,6 +191,8 @@ async function escalate(
 export async function runChatAgentForShop(shopId: string, now = new Date()): Promise<ChatAgentResult> {
   const result: ChatAgentResult = { checked: 0, greeted: 0, answered: 0, escalated: 0, skipped: 0, delivered: 0 };
   const shop = await loadShop(shopId);
+  // Агент пока только у владельца платформы: у остальных продавцов выключен, даже если флаг включён
+  if (!chatAgentAllowed(shop.owner)) return { ...result, skippedReason: 'недоступно' };
   if (!shop.chatAgentEnabled || !shop.chatAgentEnabledAt || !shop.chatSessionEnc) return { ...result, skippedReason: 'выключено' };
   const client = clientFor(shop);
 
@@ -365,7 +368,7 @@ export async function runChatAgent(): Promise<(ChatAgentResult & { shopId: strin
 }
 
 async function runAllShops(): Promise<(ChatAgentResult & { shopId: string; error?: string })[]> {
-  const shops = await prisma.shop.findMany({ where: { chatAgentEnabled: true, chatSessionEnc: { not: null } }, select: { id: true } });
+  const shops = await prisma.shop.findMany({ where: { chatAgentEnabled: true, chatSessionEnc: { not: null }, owner: { isAdmin: true } }, select: { id: true } });
   const results = [];
   for (const shop of shops) {
     try {
