@@ -123,6 +123,10 @@ model Subscription {
   reviewsAddon Boolean   @default(false)
   trialEndsAt  DateTime?
   paidUntil    DateTime?
+  // Когда клиенту ушли напоминания в Telegram об окончании пробного периода
+  trialSoonSentAt     DateTime?
+  trialExpiredSentAt  DateTime?
+  trialFollowUpSentAt DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

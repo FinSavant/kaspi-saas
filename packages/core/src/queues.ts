@@ -11,6 +11,7 @@ export const QUEUES = {
   reviews: 'reviews',
   wbSync: 'wb-sync',
   chatAgent: 'chat-agent',
+  trialReminders: 'trial-reminders',
 } as const;
 
 /** Агент-ответчик: пустые данные — проход по всем магазинам, deliver — доставить покупателю ответ владельца. */

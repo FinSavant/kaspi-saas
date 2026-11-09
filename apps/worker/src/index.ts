@@ -24,6 +24,7 @@ import { syncOrders } from './jobs/ordersSync';
 import { syncProducts } from './jobs/productsSync';
 import { enqueueDueProducts, repriceProduct } from './jobs/repricer';
 import { cleanupWaybillBatches, printWaybills } from './jobs/waybills';
+import { sendTrialReminders } from './jobs/trialReminders';
 import { syncWb } from './jobs/wbSync';
 import { checkReaderAlive } from './readerStatus';
 
@@ -152,12 +153,17 @@ async function wbForAllAccounts(job: { data: { accountId?: string } }) {
   return results;
 }
 
+// Напоминания пробным клиентам в Telegram: проверка каждые 30 минут (шлёт только днём по Алматы)
+const trialQueue = new Queue(QUEUES.trialReminders, { connection });
+await trialQueue.upsertJobScheduler('trial-reminders', { every: 30 * 60_000 }, { name: 'trial', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } });
+
 // Читатель цен на компьютере: если замолчал — предупредить в Telegram
 const readerTimer = setInterval(() => {
   checkReaderAlive().catch((error) => console.warn('[reader-alive]', error instanceof Error ? error.message : error));
 }, 5 * 60_000);
 
 const workers = [
+  new Worker(QUEUES.trialReminders, async () => sendTrialReminders(), { connection, concurrency: 1 }),
   new Worker(QUEUES.wbSync, wbForAllAccounts, { connection, concurrency: 1 }),
   new Worker(QUEUES.reviews, reviewsForAllShops, { connection }),
   // Один проход за раз; ответ владельца (deliver) идёт в той же очереди и не ждёт следующего тика
@@ -197,7 +203,7 @@ for (const worker of workers) {
 const shutdown = async () => {
   clearInterval(readerTimer);
   await Promise.all(workers.map((w) => w.close()));
-  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close(), chatAgentQueue.close(), wbQueue.close()]);
+  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close(), chatAgentQueue.close(), wbQueue.close(), trialQueue.close()]);
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

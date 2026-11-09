@@ -12,7 +12,9 @@ async function call(method: string, body: FormData): Promise<void> {
 /** Кнопка под сообщением: нажатие приходит боту как callback с `data`. */
 export interface TelegramButton {
   text: string;
-  data: string;
+  data?: string;
+  /** Кнопка-ссылка (например WhatsApp): вместо callback открывает адрес. */
+  url?: string;
 }
 
 export async function sendTelegramMessage(chatId: string, text: string, buttons: TelegramButton[] = []): Promise<void> {
@@ -20,7 +22,7 @@ export async function sendTelegramMessage(chatId: string, text: string, buttons:
   form.set('chat_id', chatId);
   form.set('text', text);
   if (buttons.length) {
-    form.set('reply_markup', JSON.stringify({ inline_keyboard: buttons.map((b) => [{ text: b.text, callback_data: b.data }]) }));
+    form.set('reply_markup', JSON.stringify({ inline_keyboard: buttons.map((b) => [b.url ? { text: b.text, url: b.url } : { text: b.text, callback_data: b.data }]) }));
   }
   await call('sendMessage', form);
 }
