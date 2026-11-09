@@ -1797,6 +1797,7 @@ app.get<{ Params: { shopId: string } }>('/shops/:shopId/reviews/settings', async
     chatConnected: !!shop.chatSessionEnc,
     shopName: shop.name,
     reviewsEnabled: shop.reviewsEnabled,
+    chatAgentEnabled: shop.chatAgentEnabled,
     reviewHoursFrom: shop.reviewHoursFrom,
     reviewHoursTo: shop.reviewHoursTo,
     reviewDelayHours: shop.reviewDelayHours,
@@ -1813,6 +1814,7 @@ app.patch<{
   Params: { shopId: string };
   Body: {
     reviewsEnabled?: boolean;
+    chatAgentEnabled?: boolean;
     reviewHoursFrom?: number;
     reviewHoursTo?: number;
     reviewDelayHours?: number;
@@ -1835,6 +1837,8 @@ app.patch<{
     if (typeof t === 'string' && (t.trim().length < 5 || t.length > 3000)) return reply.code(400).send({ error: 'Текст шаблона — от 5 до 3000 символов.' });
   }
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
+  if (b.chatAgentEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
+  const agentTurningOn = b.chatAgentEnabled === true && !shop.chatAgentEnabled;
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
   if (turningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
     return reply.code(402).send({ error: 'Отзывы не входят в ваш тариф. Они есть в «Pro» и отдельным тарифом «Только отзывы» на вкладке «Тарифы».', code: 'limit' });
@@ -1844,6 +1848,9 @@ app.patch<{
     data: {
       ...(b.reviewsEnabled !== undefined && { reviewsEnabled: b.reviewsEnabled }),
       ...(turningOn && { reviewsEnabledAt: new Date() }),
+      // Включение агента запоминает момент: на старые сообщения он не отвечает
+      ...(b.chatAgentEnabled !== undefined && { chatAgentEnabled: b.chatAgentEnabled }),
+      ...(agentTurningOn && { chatAgentEnabledAt: new Date() }),
       ...(b.reviewHoursFrom !== undefined && { reviewHoursFrom: b.reviewHoursFrom }),
       ...(b.reviewHoursTo !== undefined && { reviewHoursTo: b.reviewHoursTo }),
       ...(b.reviewDelayHours !== undefined && { reviewDelayHours: b.reviewDelayHours }),

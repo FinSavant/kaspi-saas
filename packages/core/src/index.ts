@@ -12,3 +12,4 @@ export * from './plans';
 export * from './auth';
 export * from './queues';
 export * from './wb/parseReport';
+export * from './chatAgent';

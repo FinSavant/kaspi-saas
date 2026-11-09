@@ -8,6 +8,7 @@ export interface ReviewSettings {
   chatConnected: boolean;
   shopName: string;
   reviewsEnabled: boolean;
+  chatAgentEnabled: boolean;
   reviewHoursFrom: number;
   reviewHoursTo: number;
   reviewDelayHours: number;
@@ -55,6 +56,41 @@ export function MailingToggle({ shopId, settings }: { shopId: string; settings: 
         onClick={() =>
           start(async () => {
             const r = await saveReviewSettings(shopId, { reviewsEnabled: !on });
+            if (r.error) setError(r.error);
+            else {
+              setError(undefined);
+              setOn(!on);
+            }
+          })
+        }
+        className={`relative h-6 w-11 rounded-full transition disabled:opacity-50 ${on ? 'bg-emerald-500' : 'bg-slate-600'}`}
+      >
+        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${on ? 'left-5.5' : 'left-0.5'}`} />
+      </button>
+    </div>
+  );
+}
+
+/** Переключатель «Агент-ответчик»: сам отвечает покупателям в чате, сложное передаёт в Telegram. */
+export function ChatAgentToggle({ shopId, settings }: { shopId: string; settings: ReviewSettings }) {
+  const [on, setOn] = useState(settings.chatAgentEnabled);
+  const [error, setError] = useState<string>();
+  const [pending, start] = useTransition();
+  return (
+    <div className="flex items-center gap-3 rounded-full bg-slate-900 py-2 pr-2 pl-4 text-white shadow">
+      <span aria-hidden>🤖</span>
+      <div className="leading-tight">
+        <div className="text-sm font-semibold">Агент-ответчик</div>
+        <div className={`text-xs ${on ? 'text-emerald-300' : 'text-slate-400'}`}>{error ?? (on ? 'отвечает покупателям' : 'выключен')}</div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await saveReviewSettings(shopId, { chatAgentEnabled: !on });
             if (r.error) setError(r.error);
             else {
               setError(undefined);

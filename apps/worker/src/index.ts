@@ -3,6 +3,7 @@ import {
   QUEUES,
   SnapshotPriceSource,
   redisConnectionFromUrl,
+  type ChatAgentJob,
   type OrdersSyncJob,
   type ProductsSyncJob,
   type OfferEditJob,
@@ -14,6 +15,7 @@ import { KaspiStorefrontPriceSource } from '@kaspi/kaspi-client';
 import { prisma } from '@kaspi/db';
 import { createStorage } from '@kaspi/storage';
 import { Queue, Worker } from 'bullmq';
+import { deliverOwnerAnswer, runChatAgent } from './jobs/chatAgent';
 import { sendDailyReports } from './jobs/dailyReport';
 import { editOffer } from './jobs/offerEdit';
 import { applyPreorders } from './jobs/preorder';
@@ -100,6 +102,14 @@ await reviewsQueue.upsertJobScheduler(
   { name: 'reviews', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
 );
 
+// Агент-ответчик: проход по диалогам каждые 30 секунд (скорость ответа влияет на рейтинг)
+const chatAgentQueue = new Queue<ChatAgentJob>(QUEUES.chatAgent, { connection });
+await chatAgentQueue.upsertJobScheduler(
+  'chat-agent',
+  { every: 30_000 },
+  { name: 'poll', data: {}, opts: { removeOnComplete: 20, removeOnFail: 20 } },
+);
+
 async function reviewsForAllShops() {
   const shops = await prisma.shop.findMany({ where: { reviewsEnabled: true, chatSessionEnc: { not: null } }, select: { id: true } });
   const results = [];
@@ -150,6 +160,12 @@ const readerTimer = setInterval(() => {
 const workers = [
   new Worker(QUEUES.wbSync, wbForAllAccounts, { connection, concurrency: 1 }),
   new Worker(QUEUES.reviews, reviewsForAllShops, { connection }),
+  // Один проход за раз; ответ владельца (deliver) идёт в той же очереди и не ждёт следующего тика
+  new Worker<ChatAgentJob>(
+    QUEUES.chatAgent,
+    async (job) => (job.data.escalationId ? { delivered: await deliverOwnerAnswer(job.data.escalationId) } : runChatAgent()),
+    { connection, concurrency: 2 },
+  ),
   new Worker<OfferEditJob>(QUEUES.offerEdit, async (job) => editOffer(job.data), { connection }),
   new Worker(QUEUES.preorder, preordersForAllShops, { connection }),
   new Worker<ReportJob>(QUEUES.reports, async (job) => sendDailyReports(job.data.chatId), { connection }),
@@ -181,7 +197,7 @@ for (const worker of workers) {
 const shutdown = async () => {
   clearInterval(readerTimer);
   await Promise.all(workers.map((w) => w.close()));
-  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close(), wbQueue.close()]);
+  await Promise.all([repricerQueue.close(), ordersQueue.close(), reportsQueue.close(), preorderQueue.close(), reviewsQueue.close(), chatAgentQueue.close(), wbQueue.close()]);
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

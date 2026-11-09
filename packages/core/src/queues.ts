@@ -10,7 +10,11 @@ export const QUEUES = {
   offerEdit: 'offer-edit',
   reviews: 'reviews',
   wbSync: 'wb-sync',
+  chatAgent: 'chat-agent',
 } as const;
+
+/** Агент-ответчик: пустые данные — проход по всем магазинам, deliver — доставить покупателю ответ владельца. */
+export type ChatAgentJob = { escalationId?: string };
 
 /** Правка товара из таблицы «Робот»: цена или склад (остаток / наличие). */
 export type OfferEditJob =

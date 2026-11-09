@@ -4,6 +4,7 @@ import {
   readerWarning,
   redisConnectionFromUrl,
   verifyTelegramLinkCode,
+  type ChatAgentJob,
   type ReportJob,
   type WaybillLayout,
   type WaybillsJob,
@@ -19,6 +20,7 @@ const bot = new Telegraf(token);
 const connection = redisConnectionFromUrl(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const waybillsQueue = new Queue<WaybillsJob>(QUEUES.waybills, { connection });
 const reportsQueue = new Queue<ReportJob>(QUEUES.reports, { connection });
+const chatAgentQueue = new Queue<ChatAgentJob>(QUEUES.chatAgent, { connection });
 
 // Чат привязывается к пользователю по ссылке из «Настроек» кабинета:
 // t.me/<бот>?start=<код>, код подписан секретом API_INTERNAL_KEY.
@@ -181,6 +183,26 @@ bot.command('chat', async (ctx) => {
   return ctx.reply('Вход в чат Kaspi для «Отзывов». Выберите магазин:', {
     reply_markup: { inline_keyboard: withPhone.map((s) => [{ text: `🔑 ${s.name}${s.chatSessionEnc ? ' (сейчас подключён)' : ''}`, callback_data: `chat:${s.id}` }]) },
   });
+});
+
+// Ответ владельца реплаем на вопрос агента-ответчика: уходит покупателю в чат и запоминается.
+// Раньше проверки кода из SMS: ответом может быть и просто число (цена, количество).
+bot.on('text', async (ctx, next) => {
+  const replied = ctx.message.reply_to_message;
+  const text = ctx.message.text.trim();
+  if (!replied || text.startsWith('/')) return next();
+  const escalation = await prisma.chatEscalation.findFirst({
+    where: { telegramChatId: String(ctx.chat.id), telegramMsgId: String(replied.message_id) },
+  });
+  if (!escalation) return next();
+  if (escalation.status !== 'PENDING') return ctx.reply('На этот вопрос уже ответили.');
+  const claimed = await prisma.chatEscalation.updateMany({
+    where: { id: escalation.id, status: 'PENDING' },
+    data: { status: 'ANSWERED', answer: text.slice(0, 700), answeredAt: new Date() },
+  });
+  if (claimed.count === 0) return ctx.reply('На этот вопрос уже ответили.');
+  await chatAgentQueue.add('deliver', { escalationId: escalation.id }, { removeOnComplete: 50, removeOnFail: 50 });
+  return ctx.reply('Отправляю покупателю и запоминаю ответ.');
 });
 
 bot.hears(/^\s*\d{4,8}\s*$/, async (ctx) => {

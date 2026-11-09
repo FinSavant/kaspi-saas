@@ -80,6 +80,13 @@ model Shop {
   newOrderTemplate   String?
   reviewTemplate     String?
   reviewMessagesLog  ReviewMessage[]
+  // Агент-ответчик в чате Kaspi: отвечает покупателям сам, сложное передаёт владельцу в Telegram
+  chatAgentEnabled   Boolean   @default(false)
+  // С какого момента агент включён: старые сообщения не трогаем
+  chatAgentEnabledAt DateTime?
+  chatAgentReplies   ChatAgentReply[]
+  chatEscalations    ChatEscalation[]
+  chatKnowledge      ChatKnowledge[]
   productsSyncedAt DateTime?
   ordersSyncedAt   DateTime?
   // Удержания Kaspi для аналитики: НДС на комиссию Магазина и комиссия Kaspi Pay, %
@@ -153,6 +160,10 @@ model Product {
   // (weightManual — тогда синхронизация его не перезаписывает)
   weightKg     Float?
   weightManual Boolean  @default(false)
+  // Описание и характеристики из карточки Kaspi (GET /bff/offer-view/details) — для ответов агента в чате
+  description     String?
+  specifications  Json?
+  contentSyncedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -437,4 +448,68 @@ model WbProduct {
   account WbAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@unique([accountId, nmId])
+}
+
+// Обработанные агентом сообщения покупателей: уникальный ключ не даёт ответить дважды
+model ChatAgentReply {
+  id        String   @id @default(cuid())
+  shopId    String
+  groupId   String
+  // id сообщения покупателя, на которое отвечали
+  messageId String
+  // ANSWERED — по существу, GREETING — приветствие, HOLDING — «уточню» + вопрос владельцу,
+  // SKIPPED — отвечать не стали (лимит, нет текста), DELIVERED — ответ владельца ушёл покупателю
+  kind      String
+  createdAt DateTime @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, messageId])
+  @@index([shopId, groupId, createdAt])
+}
+
+// Вопрос, который агент не смог закрыть сам: ушёл владельцу в Telegram, ждёт ответа реплаем
+model ChatEscalation {
+  id             String    @id @default(cuid())
+  shopId         String
+  groupId        String
+  messageId      String
+  // Вопрос покупателя (последние сообщения подряд) и товар, по которому он
+  question       String
+  masterSku      String?
+  productName    String?
+  // Куда отправили владельцу: ответ реплаем на это сообщение
+  telegramChatId String?
+  telegramMsgId  String?
+  // PENDING — ждёт ответа, ANSWERED — ответ получен, DELIVERED — ушёл покупателю, FAILED — не удалось отправить
+  status         String    @default("PENDING")
+  answer         String?
+  error          String?
+  createdAt      DateTime  @default(now())
+  answeredAt     DateTime?
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, messageId])
+  @@index([telegramChatId, telegramMsgId])
+  @@index([shopId, status])
+}
+
+// Память агента: ответы владельца на вопросы покупателей, их агент использует в следующий раз
+model ChatKnowledge {
+  id         String   @id @default(cuid())
+  shopId     String
+  question   String
+  answer     String
+  // Если ответ про конкретный товар — его masterSku; null — для всех товаров магазина
+  masterSku  String?
+  productName String?
+  uses       Int      @default(0)
+  // Владелец может отключить запись, если ответ устарел
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, active])
 }

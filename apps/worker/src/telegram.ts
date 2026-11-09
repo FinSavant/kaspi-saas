@@ -37,3 +37,15 @@ export async function sendTelegramDocument(
   form.set('document', new Blob([Buffer.from(bytes)], { type: 'application/pdf' }), filename);
   await call('sendDocument', form);
 }
+
+/** То же, но возвращает id сообщения: владелец отвечает на него реплаем (вопросы агента-ответчика). */
+export async function sendTelegramMessageWithId(chatId: string, text: string): Promise<string | null> {
+  const form = new FormData();
+  form.set('chat_id', chatId);
+  form.set('text', text);
+  const res = await fetch(botUrl('sendMessage'), { method: 'POST', body: form });
+  if (!res.ok) throw new Error(`Telegram sendMessage failed with ${res.status}`);
+  const json: any = await res.json().catch(() => null);
+  const id = json?.result?.message_id;
+  return id === undefined || id === null ? null : String(id);
+}

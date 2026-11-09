@@ -3,7 +3,7 @@ import { HelpTip } from '@/components/HelpTip';
 import { TIPS } from '@/lib/tips';
 import { SearchBox } from '@/components/SearchBox';
 import { api } from '@/lib/api';
-import { MailingToggle, SettingsButton, TemplatesButton, type ReviewSettings } from './Controls';
+import { ChatAgentToggle, MailingToggle, SettingsButton, TemplatesButton, type ReviewSettings } from './Controls';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,6 +91,7 @@ export default async function ReviewsPage({
         </div>
         <div className="flex items-center gap-2">
           <MailingToggle shopId={shopId} settings={settings} />
+          <ChatAgentToggle shopId={shopId} settings={settings} />
           <SettingsButton shopId={shopId} settings={settings} />
           <TemplatesButton shopId={shopId} settings={settings} />
         </div>

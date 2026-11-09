@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_TEMPLATES,
+  isOrderGroup,
   NOT_SOLD_STATUSES,
   decryptSecret,
   encryptSecret,
@@ -60,7 +61,7 @@ export async function sendReviewMessages(shopId: string, now = new Date()): Prom
  * Сессия чата держится только на SMS-входе, без кода её не вернуть. Когда Kaspi
  * её закрыл — убираем её, чтобы в «Настройках» снова был вход, и пишем владельцу в Telegram.
  */
-async function dropDeadSession(shopId: string) {
+export async function dropDeadSession(shopId: string) {
   const shop = await prisma.shop.update({
     where: { id: shopId },
     data: { chatSessionEnc: null },
@@ -137,7 +138,8 @@ async function sendWithSession(shopId: string, now: Date): Promise<ReviewsResult
   for (let page = 0; page < MAX_GROUP_PAGES && [...wanted].some((c) => !groups.has(c)); page++) {
     const data = await chatWithRefresh(client, '/api/v1/group/loadGroups/chat', { limit: 25, gts }, shop.merchantId);
     const list: any[] = data?.groups ?? [];
-    for (const g of list) if (g?.analytics?.order_id) groups.set(String(g.analytics.order_id), g);
+    // Диалоги по товару (tags PRODUCTS) — не заказы: их analytics.order_id это masterSku
+    for (const g of list) if (g?.analytics?.order_id && isOrderGroup(g)) groups.set(String(g.analytics.order_id), g);
     if (!data?.more || list.length === 0) break;
     gts = Math.min(...list.map((g) => Number(g.gts)));
   }

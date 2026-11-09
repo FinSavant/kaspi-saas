@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 
 export interface ReviewSettingsPatch {
   reviewsEnabled?: boolean;
+  chatAgentEnabled?: boolean;
   reviewHoursFrom?: number;
   reviewHoursTo?: number;
   reviewDelayHours?: number;
