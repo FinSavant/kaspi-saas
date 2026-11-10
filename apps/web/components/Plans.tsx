@@ -10,6 +10,7 @@ export interface Plan {
   maxPreorderProducts: number;
   features: Feature[];
   reviewsIncluded: boolean;
+  agentIncluded: boolean;
   single?: boolean;
 }
 
@@ -20,12 +21,15 @@ export interface Billing {
   activeUntil: string | null;
   reviewsAddon: boolean;
   reviewsAllowed: boolean;
+  agentAddon: boolean;
+  agentAllowed: boolean;
   /** Открытые разделы кабинета */
   features: Feature[];
   monthlyPrice: number;
   usage: { shops: number; robotProducts: number; preorderProducts: number };
   plans: Plan[];
   reviewsAddonPrice: number;
+  agentAddonPrice: number;
   trialDays: number;
   whatsapp: string | null;
 }
@@ -43,7 +47,12 @@ export function whatsappLink(number: string | null, text: string): string | null
 function planLines(p: Plan): string[] {
   if (p.single) {
     return p.features.includes('reviews')
-      ? ['✓ 1 магазин', '✓ Отзывы: робот пишет покупателям и просит отзыв', '✓ Агент-ответчик в чате: ответ до 1 минуты', '✓ Шаблоны сообщений и время рассылки']
+      ? [
+          '✓ 1 магазин',
+          '✓ Отзывы: робот пишет покупателям и просит отзыв',
+          '✓ Шаблоны сообщений и время рассылки',
+          ...(p.agentIncluded ? ['✓ ИИ-агент отвечает покупателям в чате до 1 минуты'] : ['✗ Без ИИ-агента (его можно добавить опцией)']),
+        ]
       : ['✓ 1 магазин', '✓ Аналитика: выручка, прибыль, товары, география', '✓ Свои расходы и удержания Kaspi'];
   }
   return [
@@ -53,7 +62,7 @@ function planLines(p: Plan): string[] {
     '✓ Накладные, сборка',
     '✓ Аналитика',
     '✓ Telegram-отчёт',
-    ...(p.reviewsIncluded ? ['✓ Отзывы и агент-ответчик включены'] : []),
+    ...(p.reviewsIncluded ? ['✓ Отзывы включены', ...(p.agentIncluded ? ['✓ ИИ-агент отвечает покупателям в чате'] : ['✗ ИИ-агент — отдельная опция'])] : ['✗ Без отзывов']),
   ];
 }
 
@@ -103,6 +112,22 @@ export function PlanCards({ b }: { b: Billing }) {
           <PlanCard key={p.id} p={p} b={b} />
         ))}
       </div>
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+        <h2 className="text-lg font-bold">🤖 Опция «ИИ-агент» — {money(b.agentAddonPrice)} / месяц</h2>
+        <p className="mt-1 text-sm text-emerald-900">
+          Агент сам отвечает покупателям в чате Kaspi до 1 минуты, изучает описания ваших товаров и учится на ваших ответах. Добавляется к тарифу
+          «Только отзывы». В «Pro» и «Отзывы + ИИ-агент» он уже включён. В пробный период агент доступен бесплатно.
+          {b.agentAddon && ' Опция у вас подключена.'}
+        </p>
+        {(() => {
+          const link = whatsappLink(b.whatsapp, `Здравствуйте! Хочу подключить опцию SANQ «ИИ-агент» (${money(b.agentAddonPrice)} в месяц).`);
+          return link ? (
+            <a href={link} target="_blank" rel="noreferrer" className="mt-3 inline-block rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+              Подключить агента
+            </a>
+          ) : null;
+        })()}
+      </section>
       {single.length > 0 && (
         <>
           <h2 className="pt-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">Нужен только один раздел</h2>

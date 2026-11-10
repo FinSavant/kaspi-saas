@@ -14,6 +14,7 @@ export interface Row {
   status: 'trial' | 'paid' | 'expired';
   activeUntil: string | null;
   reviewsAddon: boolean;
+  agentAddon: boolean;
   monthlyPrice: number;
   usage: { shops: number; robotProducts: number };
 }
@@ -129,10 +130,14 @@ export function AdminTable({ rows }: { rows: Row[] }) {
                       <option value="start">Старт</option>
                       <option value="pro">Pro</option>
                       <option value="reviews">Только отзывы</option>
+                      <option value="reviews_ai">Отзывы + ИИ-агент</option>
                       <option value="analytics">Только аналитика</option>
                     </select>
                     <label className="flex items-center gap-1 text-xs">
                       <input type="checkbox" name="reviewsAddon" defaultChecked={r.reviewsAddon} /> отзывы
+                    </label>
+                    <label className="flex items-center gap-1 text-xs">
+                      <input type="checkbox" name="agentAddon" defaultChecked={r.agentAddon} /> ИИ-агент
                     </label>
                     <label className="flex items-center gap-1 text-xs">
                       оплачено до

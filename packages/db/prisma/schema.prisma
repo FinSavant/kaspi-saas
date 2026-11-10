@@ -121,6 +121,8 @@ model Subscription {
   plan         String    @default("start")
   // Доплата за отзывы к тарифу «Старт»
   reviewsAddon Boolean   @default(false)
+  // Опция «ИИ-агент» (+4 990 ₸) к тарифу с отзывами
+  agentAddon   Boolean   @default(false)
   trialEndsAt  DateTime?
   paidUntil    DateTime?
   // Когда клиенту ушли напоминания в Telegram об окончании пробного периода

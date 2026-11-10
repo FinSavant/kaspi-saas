@@ -19,6 +19,7 @@ export async function saveSubscription(formData: FormData): Promise<void> {
     body: {
       plan: String(formData.get('plan')),
       reviewsAddon: formData.get('reviewsAddon') === 'on',
+      agentAddon: formData.get('agentAddon') === 'on',
       ...(addMonths > 0 ? { addMonths } : paidUntil ? { paidUntil: `${paidUntil}T23:59:59+05:00` } : {}),
     },
   });

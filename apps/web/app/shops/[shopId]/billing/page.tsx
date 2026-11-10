@@ -57,6 +57,7 @@ export default async function BillingPage({ params }: { params: Promise<{ shopId
             <div className="text-xl font-bold">
               {current.name} · {money(b.monthlyPrice)} в месяц
             </div>
+            {b.agentAddon && !current.agentIncluded && <div className="text-sm text-slate-500">включая ИИ-агента {money(b.agentAddonPrice)}</div>}
             {b.reviewsAddon && !current.reviewsIncluded && <div className="text-sm text-slate-500">включая отзывы {money(b.reviewsAddonPrice)}</div>}
             <div className={`mt-1 text-sm ${b.status === 'expired' && !b.isAdmin ? 'font-medium text-red-700' : 'text-slate-600'}`}>{statusText}</div>
           </div>

@@ -78,7 +78,7 @@ export default async function ReviewsPage({
   const [settings, list, billing] = await Promise.all([
     api<ReviewSettings>(`/shops/${shopId}/reviews/settings`),
     api<{ counts: Record<string, number>; rows: ReviewRow[] }>(`/shops/${shopId}/reviews?${query}`),
-    api<{ reviewsAllowed: boolean; reviewsAddonPrice: number }>(`/shops/${shopId}/billing`),
+    api<{ reviewsAllowed: boolean; reviewsAddonPrice: number; agentAllowed: boolean; agentAddonPrice: number }>(`/shops/${shopId}/billing`),
   ]);
   const href = (f: string) => `/shops/${shopId}/reviews?filter=${f}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
 
@@ -117,6 +117,18 @@ export default async function ReviewsPage({
           </span>
           <Link href={`/shops/${shopId}/billing`} className="rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700">
             Подключить отзывы
+          </Link>
+        </div>
+      )}
+
+      {billing.reviewsAllowed && !billing.agentAllowed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>
+            ИИ-агент не входит в ваш тариф: он не отвечает покупателям. Подключите его опцией за {billing.agentAddonPrice.toLocaleString('ru-RU')} ₸ в месяц или
+            тарифом «Отзывы + ИИ-агент».
+          </span>
+          <Link href={`/shops/${shopId}/billing`} className="rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700">
+            Подключить агента
           </Link>
         </div>
       )}

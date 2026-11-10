@@ -19,13 +19,13 @@ function whatsapp(text: string): string {
 
 function planLines(p: Plan, t: LandingText): string[] {
   const pr = t.prices;
-  if (p.single) return p.features.includes('reviews') ? pr.singleReviews : pr.singleAnalytics;
+  if (p.single) return p.features.includes('reviews') ? (p.agentIncluded ? pr.singleReviewsAgent : pr.singleReviews) : pr.singleAnalytics;
   return [
     pr.shops(p.maxShops),
     pr.robot(p.maxRobotProducts),
     pr.preorder(p.maxPreorderProducts),
     ...pr.base,
-    ...(p.reviewsIncluded ? [pr.reviewsIncluded] : []),
+    ...(p.reviewsIncluded && p.agentIncluded ? [pr.reviewsIncluded] : []),
   ];
 }
 

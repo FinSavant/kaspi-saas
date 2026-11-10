@@ -26,6 +26,7 @@ import {
   sessionTokenHash,
   verifyPassword,
   REVIEWS_ADDON_PRICE,
+  AGENT_ADDON_PRICE,
   TRIAL_DAYS,
   getPlan,
   subscriptionState,
@@ -993,6 +994,8 @@ function serializeBilling(user: { isAdmin: boolean }, sub: Awaited<ReturnType<ty
     activeUntil: user.isAdmin ? null : state.activeUntil,
     reviewsAddon: sub.reviewsAddon,
     reviewsAllowed: user.isAdmin || state.reviewsAllowed,
+    agentAddon: sub.agentAddon,
+    agentAllowed: user.isAdmin || state.agentAllowed,
     // Открытые разделы кабинета (меню и страницы прячут остальные)
     features: ownerAccess({ isAdmin: user.isAdmin, subscription: sub }).features,
     monthlyPrice: state.monthlyPrice,
@@ -1006,6 +1009,7 @@ async function billingFor(user: { id: string; isAdmin: boolean }) {
     ...serializeBilling(user, sub, usage),
     plans: PLANS,
     reviewsAddonPrice: REVIEWS_ADDON_PRICE,
+    agentAddonPrice: AGENT_ADDON_PRICE,
     trialDays: TRIAL_DAYS,
     whatsapp: whatsappNumber,
   };
@@ -1054,10 +1058,10 @@ app.delete<{ Params: { userId: string } }>('/admin/users/:userId', async (reques
 });
 
 /** Ручное продление после оплаты в WhatsApp: тариф, доплата за отзывы и срок «оплачено до». */
-app.put<{ Params: { userId: string }; Body: { plan?: string; reviewsAddon?: boolean; paidUntil?: string | null; addMonths?: number } }>(
+app.put<{ Params: { userId: string }; Body: { plan?: string; reviewsAddon?: boolean; agentAddon?: boolean; paidUntil?: string | null; addMonths?: number } }>(
   '/admin/subscriptions/:userId',
   async (request, reply) => {
-    const { plan, reviewsAddon, paidUntil, addMonths } = request.body ?? {};
+    const { plan, reviewsAddon, agentAddon, paidUntil, addMonths } = request.body ?? {};
     if (plan !== undefined && getPlan(plan).id !== plan) return reply.code(400).send({ error: 'Неизвестный тариф' });
     const sub = await ownerSubscription(request.params.userId);
     let until: Date | null | undefined;
@@ -1073,7 +1077,7 @@ app.put<{ Params: { userId: string }; Body: { plan?: string; reviewsAddon?: bool
     }
     await prisma.subscription.update({
       where: { userId: request.params.userId },
-      data: { plan, reviewsAddon, paidUntil: until },
+      data: { plan, reviewsAddon, agentAddon, paidUntil: until },
     });
     return { ok: true };
   },
@@ -1839,8 +1843,8 @@ app.patch<{
   if (b.reviewsEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   if (b.chatAgentEnabled && !shop.chatSessionEnc) return reply.code(400).send({ error: 'Сначала подключите чат в «Настройках».' });
   const agentTurningOn = b.chatAgentEnabled === true && !shop.chatAgentEnabled;
-  if (agentTurningOn && !(await accessForShop(shop.id)).reviewsAllowed) {
-    return reply.code(402).send({ error: 'Агент-ответчик входит в блок «Отзывы»: он есть в «Pro» и тарифе «Только отзывы».', code: 'limit' });
+  if (agentTurningOn && !(await accessForShop(shop.id)).agentAllowed) {
+    return reply.code(402).send({ error: 'ИИ-агент не входит в ваш тариф. Его можно подключить опцией за 4 990 ₸ или тарифом «Отзывы + ИИ-агент» на вкладке «Тарифы».', code: 'limit' });
   }
   const turningOn = b.reviewsEnabled === true && !shop.reviewsEnabled;
   if (turningOn && !(await accessForShop(shop.id)).reviewsAllowed) {

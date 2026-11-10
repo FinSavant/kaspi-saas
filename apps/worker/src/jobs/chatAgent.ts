@@ -192,8 +192,9 @@ export async function runChatAgentForShop(shopId: string, now = new Date()): Pro
   const result: ChatAgentResult = { checked: 0, greeted: 0, answered: 0, escalated: 0, skipped: 0, delivered: 0 };
   const shop = await loadShop(shopId);
   if (!shop.chatAgentEnabled || !shop.chatAgentEnabledAt || !shop.chatSessionEnc) return { ...result, skippedReason: 'выключено' };
-  // Агент входит в блок «Отзывы»: тариф истёк или отзывы не входят в тариф — агент стоит, настройки сохраняются
-  if (!ownerAccess(shop.owner, now).reviewsAllowed) return { ...result, skippedReason: 'не входит в тариф' };
+  // Агент — отдельная опция: тариф истёк, отзывов или агента нет в тарифе — агент стоит, настройки сохраняются
+  const access = ownerAccess(shop.owner, now);
+  if (!access.reviewsAllowed || !access.agentAllowed) return { ...result, skippedReason: 'не входит в тариф' };
   const client = clientFor(shop);
 
   try {
