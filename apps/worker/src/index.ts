@@ -1,6 +1,7 @@
 import {
   MockCompetitorPriceSource,
   QUEUES,
+  ownerAccess,
   SnapshotPriceSource,
   redisConnectionFromUrl,
   type ChatAgentJob,
@@ -126,7 +127,15 @@ async function reviewsForAllShops() {
 
 async function preordersForAllShops() {
   // Все магазины со входом в кабинет: снимать забытый предзаказ нужно и без настроек дней
-  const shops = await prisma.shop.findMany({ where: { mcSessionEnc: { not: null } }, select: { id: true } });
+  const allShops = await prisma.shop.findMany({
+    where: { mcSessionEnc: { not: null } },
+    select: { id: true, owner: { select: { isAdmin: true, subscription: true } } },
+  });
+  // Срок тарифа истёк или раздела нет в тарифе — предзаказ не трогаем, настройки сохраняются
+  const shops = allShops.filter((s) => {
+    const access = ownerAccess(s.owner);
+    return access.active && access.features.includes('robot');
+  });
   const results = [];
   for (const shop of shops) {
     try {
